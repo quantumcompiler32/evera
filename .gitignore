@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.*
+data/
+datasets/
+captures/
+outputs/
+checkpoints/
+wandb/
+*.mp4
+*.parquet
