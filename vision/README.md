@@ -7,8 +7,9 @@ live inference; the browser displays the MJPEG feed and offers capture and
 labeling controls.
 
 The code is here, but captured photos, labels, and model weights stay out of
-Git. The first workshop run used only eight distinct labeled scenes, so its
-validation result is too small to establish reliable accuracy. Expect board
+Git. Only eight distinct scenes have been labeled, and the current live weights
+were trained on seven. That validation set is too small to establish reliable
+accuracy. Expect board
 confusion and false positives until more varied images and negative scenes are
 labeled and evaluated on the intended camera.
 
