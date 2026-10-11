@@ -84,9 +84,32 @@ class Segmenter:
                                         self.conf_threshold, self.iou_threshold)
             keep.extend(group[np.asarray(selected).reshape(-1)].tolist())
         keep.sort(key=lambda index: float(confidences[candidates[index]]), reverse=True)
+        # The two boards can produce near-identical, overlapping predictions.
+        # Keep the higher-scoring board when both classes claim the same region.
+        distinct = []
+        for kept in keep:
+            current = candidates[kept]
+            current_class = int(class_ids[current])
+            if current_class in (0, 1):
+                duplicate_board = False
+                for accepted in distinct:
+                    other = candidates[accepted]
+                    if int(class_ids[other]) not in (0, 1):
+                        continue
+                    a, b = boxes[kept], boxes[accepted]
+                    overlap = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(
+                        0.0, min(a[3], b[3]) - max(a[1], b[1]))
+                    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+                    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+                    if overlap / max(area_a + area_b - overlap, 1e-6) >= 0.8:
+                        duplicate_board = True
+                        break
+                if duplicate_board:
+                    continue
+            distinct.append(kept)
         proto = prototype[0].reshape(32, -1)
         results = []
-        for kept in keep[:30]:
+        for kept in distinct[:30]:
             index = candidates[kept]
             box = boxes[kept].copy()
             box[[0, 2]] = (box[[0, 2]] - pad_x) / gain

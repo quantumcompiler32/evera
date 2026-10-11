@@ -16,8 +16,9 @@ import numpy as np
 from onnx_segmenter import CLASS_NAMES, Segmenter
 
 
+ACTIVE_CLASSES = ("raspberry_pi", "arduino", "pinecil")
 COLORS = {"raspberry_pi": (30, 230, 90), "arduino": (255, 175, 40),
-          "pinecil": (40, 150, 255), "wire": (235, 70, 220)}
+          "pinecil": (40, 150, 255)}
 
 
 def draw_masks(frame: np.ndarray, results):
@@ -46,7 +47,7 @@ button{font:inherit;padding:9px 14px;margin:8px 8px 0 0;border:0;border-radius:7
 <img src="/stream" alt="Live Limelight feed with alignment grid and instance masks">
 <p>Saved photos are raw camera frames without the grid or colored masks.</p>
 <button onclick="capture('raspberry_pi')">Capture Pi</button><button onclick="capture('arduino')">Capture Arduino</button>
-<button onclick="capture('pinecil')">Capture Pinecil</button><button onclick="capture('wire')">Capture wires</button>
+<button onclick="capture('pinecil')">Capture Pinecil</button>
 <button onclick="capture('empty')">Capture empty scene</button><div id="status" role="status"></div>
 <script>async function capture(label){try{const r=await fetch('/capture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})});const d=await r.json();document.getElementById('status').textContent=r.ok?'Saved '+d.file:'Capture failed: '+d.error}catch(e){document.getElementById('status').textContent='Capture failed: '+e}}
 async function status(){try{const d=await(await fetch('/health')).json();document.getElementById('mode').textContent=d.camera_ready?(d.model_ready?'CNN mask overlay active':'Camera live; CNN checkpoint not loaded yet'):'Waiting for camera frames…';document.getElementById('focus').textContent=d.focus_score===null?'Focus score: waiting for frame':'Focus score: '+d.focus_score+' (higher is sharper)';document.getElementById('latency').textContent=d.inference_ms===null?'':'CPU mask inference: '+d.inference_ms+' ms';document.getElementById('quality').textContent=d.model_ready?'Provisional model: masks have not passed a reviewed camera test set; do not use for robot commands.':''}catch(e){document.getElementById('mode').textContent='Preview server unavailable'}}status();setInterval(status,1000)</script>
@@ -139,11 +140,13 @@ def serve(camera, captures: Path, port: int, checkpoint: Path | None, device: st
                     started = time.perf_counter()
                     if backend == "onnx-cpu":
                         predictions = model.segment(cv2.cvtColor(raw, cv2.COLOR_BGR2RGB))
-                        results = [(item.cls, item.conf, item.mask) for item in predictions]
+                        results = [(item.cls, item.conf, item.mask) for item in predictions
+                                   if item.cls in ACTIVE_CLASSES]
                     else:
                         from segmentation_model import predict_frame
                         results = [(CLASS_NAMES[class_id - 1], score, mask)
-                                   for class_id, score, mask in predict_frame(model, raw, device, confidence)]
+                                   for class_id, score, mask in predict_frame(model, raw, device, confidence)
+                                   if CLASS_NAMES[class_id - 1] in ACTIVE_CLASSES]
                     painted = draw_masks(raw, results)
                     with state_lock:
                         state["frame"] = painted
@@ -211,7 +214,7 @@ def serve(camera, captures: Path, port: int, checkpoint: Path | None, device: st
                 if length > 4096:
                     raise ValueError("Request too large")
                 label = json.loads(self.rfile.read(length))["label"]
-                if label not in CLASS_NAMES + ("empty",):
+                if label not in ACTIVE_CLASSES + ("empty",):
                     raise ValueError("Unknown label")
                 frame = camera.latest()
                 if frame is None:

@@ -2,10 +2,13 @@
 
 The current **provisional** live model is a YOLO11n-seg convolutional network
 trained on proposals and exported to ONNX. `onnx_segmenter.py` runs masks on the
-NucBox CPU using only NumPy, ONNX Runtime, and OpenCV. Its four classes, in
-order, are `raspberry_pi`, `arduino`, `pinecil`, and `wire`. Every visible loose
-wire should receive its own instance mask. The earlier Mask R-CNN code remains
-as an experimental baseline; it has not produced a checkpoint.
+NucBox CPU using only NumPy, ONNX Runtime, and OpenCV. Its existing ONNX file
+still embeds four classes: `raspberry_pi`, `arduino`, `pinecil`, and `wire`.
+The user has since narrowed the next model to the first **three** classes.
+The live page filters out wire predictions and no longer offers wire capture;
+the ONNX file itself has not yet been retrained or validated for three classes.
+The earlier Mask R-CNN code remains as an experimental baseline; it has not
+produced a checkpoint.
 
 ## Current data and evidence
 
@@ -21,10 +24,18 @@ as an experimental baseline; it has not produced a checkpoint.
   reserved for final evaluation. Current scores are not a basis for arm control.
 - A new 45-second `camera1` session yielded 210 captures; `select_frames.py`
   reduced it to 30 representative frames with rotations and partial occlusion.
-  These new frames are **not labeled yet**. On them, the provisional model made
-  23 Pi, 23 Arduino, 22 Pinecil, and only 1 wire prediction at 0.4 confidence.
+  These new frames are **not reviewed or fully labeled yet**. A three-class
+  proposal pass on the 30 raw frames made 23 Pi, 23 Arduino, and 23 Pinecil
+  proposals at 0.35 confidence. Missed objects require manual additions.
+  An earlier four-class pass made only 1 wire prediction at 0.4 confidence.
   This is a failure check, not recall or accuracy, because no reviewed truth
   exists for that session.
+- Two empty-mat `camera1` frames produced no detections at 0.4 confidence.
+  Six new clear/hand-covered frames show all three detections when unobstructed,
+  with some boards lost during hand coverage. Lowering confidence to 0.2 did
+  not recover those misses. A can example shown in a screenshot was not present
+  in the raw captures, and the user confirmed a can is not part of the target
+  setting. Realistic robot-arm occlusion remains a data need.
 
 All images, masks, and weights are stored outside Git.
 
@@ -67,6 +78,10 @@ from `~/evera-vision`:
 The page colors each predicted mask, displays a 3-by-3 alignment grid, and
 saves raw frames. Its provisional warning is deliberate. `GET /health` reports
 camera/model status, focus score, and CPU mask processing time.
+Board predictions with at least 0.8 box IoU are now de-duplicated across Pi
+and Arduino classes, retaining the higher-confidence label. This removes a
+double label seen on one clear frame; it does not resolve genuine board
+misclassification.
 Forward remote port 8765 through SSH and open `http://127.0.0.1:8765/`.
 
 ## Data preparation and training
@@ -129,6 +144,18 @@ status snapshots while one preview server ran. This excludes camera arrival
 and browser delivery latency. Held-out accuracy is still needed. Ultralytics code
 and trained models use AGPL-3.0 by default; check that license before
 distributing a derivative.
+
+## Next three-class dataset
+
+`vision_training/propose_masks.py` saves raw `camera1` frames, individual
+prediction masks, previews, and a session manifest. It excludes contact sheets
+from training input. The 30-frame session is prepared at
+`datasets/segmentation/camera1-session-20261010-proposals-v2` on the NucBox;
+all 69 masks are explicitly **unreviewed proposals**, not labels suitable for
+quality claims. Review each frame, correct masks, and add the missed instances.
+Keep the whole recording session in one data split. A separate whole session
+with reviewed masks is still required for an honest test result, along with
+more camera-specific instances of each class.
 
 ## References
 

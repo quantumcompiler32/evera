@@ -2,8 +2,8 @@
 
 ## Goal and boundary
 
-Segment each visible Raspberry Pi, Arduino, Pinecil soldering iron, and loose
-wire in the Limelight 3A view. The output is a class, confidence, and binary
+Segment each visible Raspberry Pi, Arduino, and Pinecil soldering iron in the
+Limelight 3A view. The output is a class, confidence, and binary
 pixel mask for each instance. The robot arm is not controlled by this code.
 Masks alone do not provide safe grasp points or 3D coordinates; arm integration
 also needs camera-to-robot geometry, depth or a known work plane, motion safety,
@@ -18,7 +18,7 @@ Limelight 3A clean MJPEG frame (USB network, port 5802)
     -> per-instance masks, classes, scores
     -> browser overlay or downstream robot perception adapter
 
-Existing photos + licensed public wire masks + new Limelight scenes
+Raw Limelight sessions with three-object masks and empty scenes
     -> individual mask review -> grouped train/validation/test splits
     -> AMD GPU fine-tuning offline -> CPU ONNX export
     -> held-out Limelight evaluation
@@ -28,12 +28,13 @@ Existing photos + licensed public wire masks + new Limelight scenes
 The provisional live model is YOLO11n-seg exported to ONNX, with a small
 NumPy/OpenCV/ONNX Runtime CPU adapter. The Torchvision Mask R-CNN code is an
 untrained comparison baseline. Meta SAM only proposes training masks from
-legacy boxes; it is not the deployed CNN. Public WireSeg masks are synthetic
-and do not replace real Limelight wire annotations. The source dataset stores
-one binary PNG per object, including separate masks for crossing wires.
+legacy boxes; it is not the deployed CNN. The old four-class provisional ONNX
+still contains a wire output, which the live preview filters out. WireSeg data
+is retained only as an earlier experiment. The next checkpoint must have the
+three agreed classes and be evaluated before downstream use.
 
 The earlier nine-class bounding-box `Detector` contract is incompatible with
-the user's later choice of four-class instance masks. No robot integration
+the user's later choice of three-class instance masks. No robot integration
 should import this provisional segmenter as if it satisfied that contract;
 the consuming interface must be agreed with the other workstream.
 
@@ -51,17 +52,18 @@ downsamples it to `camera1` 640×480 ZMQ on port 5557 for training and robot
 integration. The existing `top` and `wrist` relays remain separate.
 
 Mount the camera rigidly above the work area, keep focus and lighting stable,
-and include the whole object and wire in frame. Changing camera position,
+and include the whole target object in frame. Changing camera position,
 lighting, or pipeline settings after labeling creates a new image domain and
 calls for new evaluation images.
 
 ## Validation gates
 
-1. Review every proposal mask and add missing objects, including each wire.
+1. Review every proposal mask and add missing Pi, Arduino, and Pinecil objects,
+   including realistic partial occlusion by hands or the robot arm.
 2. Keep related frames and augmentations in the same split. Reserve a separate
    Limelight capture session for final testing.
-3. Report per-class precision, recall, mask AP, false positives on empty scenes,
-   and wire instance errors at crossings. Do not infer real-world accuracy from
+3. Report per-class precision, recall, mask AP, and false positives on empty
+   scenes. Do not infer real-world accuracy from
    the one legacy validation scene.
 4. Measure live CPU frame latency on the AMD PC. Test the exact
    checkpoint and class map used in the browser.
