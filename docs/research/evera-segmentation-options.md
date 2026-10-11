@@ -1,5 +1,9 @@
 # Evera: existing tools for four-class instance segmentation
 
+> **Scope changed after this note:** the next model is three-class (`raspberry_pi`, `arduino`, `pinecil`).
+> The `wire` class was dropped. The model advice below still applies. Current status is in
+> [vision/README.md](../../vision/README.md).
+
 Research snapshot: 2026-10-10. Scope: `raspberry_pi`, `arduino`, Pinecil soldering iron, and each individual loose `wire` in the overhead Limelight view. This is a research recommendation, not a trained or validated detector.
 
 ## Recommended route

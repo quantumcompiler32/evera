@@ -1,66 +1,102 @@
-# Handoff: current state (Sat Oct 10, ~6:40 PM)
+# Handoff: current state (Sun Oct 11, early morning)
 
-Read this first if you're picking up on a new computer (or a new Claude session).
-Background on the event/plan: `TEAM_CONTEXT.md`. Arm setup reference: `ARM_RUNBOOK.md`.
+Read this first if you're picking up on a new computer or in a new Claude session. Setup from scratch is in
+[SETUP.md](SETUP.md), and how the pieces connect is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Where things run
+
 | Machine | Address | What's on it |
 |---|---|---|
-| **GMKtec NucBox EVO-X2** (Ubuntu 26.04, Ryzen AI Max+, Radeon 8060S, LeRobot **0.6.2** in conda env `lerobot`) | `ssh aup@<GMKTEC_IP>` | Arms, cameras, recording, **dashboard**, all scripts in `~/hackathon/` |
-| AMD Radeon Cloud (Jupyter) | radeon-global.anruicloud.com | Training only. **Disk is wiped on every launch.** Stop the instance when idle (1 credit/h) |
-| Any laptop | browser | Dashboard: **http://<GMKTEC_IP>:8080** |
+| **NucBox** (GMKtec EVO-X2) | `ssh aup@<GMKTEC_IP>` | Arms, cameras, dashboard, recordings in `~/hackathon/`, π₀.₅ in `~/pi05/`, vision in `~/evera-vision/` |
+| AMD Radeon Cloud (Jupyter) | radeon-global.anruicloud.com | Training only. **The disk is wiped on every launch.** Stop the instance when idle (1 credit/h). |
+| Any laptop or the iPad | browser | Dashboard at `http://<GMKTEC_IP>:8080`, evera at `/evera/` |
 
-## evera iPad app (Mission 2 demo UI)
-- `evera/`: a JARVIS-style iPad web app with a 3D SO-101, tool orbs, voice (OpenAI + ElevenLabs) and a STOP button. Each tool mode runs through `/api/policy`.
-- Served by `robot/dashboard.py` at `/evera/`. That file also sends CORS headers.
-- Deploy, tunnel (HTTPS for the mic), iPad setup, and how to point modes at new checkpoints: **`evera/README.md`**. Original build spec: `docs/EVERA_PROMPT.md`.
+Hugging Face on the NucBox is logged in as **Neevdharod**. Don't replace that login: `record.sh` uploads to `Neevdharod/*`.
 
-## Recording dashboard (the main tool)
-- http://<GMKTEC_IP>:8080 shows live top + wrist cameras and START SESSION / DONE-NEXT (Space) / REDO (R) / STOP (Q) / Check motors / Mark bad / Upload.
-- Restart it: `ssh aup@<GMKTEC_IP> 'cd ~/hackathon && source ~/miniforge3/etc/profile.d/conda.sh && conda activate lerobot && kill $(cat ~/dashboard.pid); setsid nohup python robot/dashboard.py > ~/dashboard.log 2>&1 < /dev/null & echo $! > ~/dashboard.pid'`
-- Camera bridges (must be running): `bash ~/hackathon/robot/start_limelight.sh` (logs `~/cam_top.log`, `~/cam_wrist.log`; they auto-restart on stalls)
-- CLI equivalent: `bash ~/hackathon/robot/record.sh one|session N|bad|status|upload|check|practice`
+## Everyday commands (on the NucBox)
+
+```bash
+bash ~/hackathon/robot/start_limelight.sh                 # camera bridges (auto-restart on stalls)
+bash ~/hackathon/robot/record.sh status|check|review|upload|practice
+bash ~/hackathon/robot/record.sh policy <ckpt_dir> [secs] # run a checkpoint on the follower
+```
+
+Restart the dashboard with this one-liner:
+
+```bash
+ssh aup@<GMKTEC_IP> 'cd ~/hackathon && source ~/miniforge3/etc/profile.d/conda.sh && conda activate lerobot && kill $(cat ~/dashboard.pid); setsid nohup python robot/dashboard.py > ~/dashboard.log 2>&1 < /dev/null & echo $! > ~/dashboard.pid'
+```
+
+The dashboard shows live top and wrist cameras, plus START SESSION, DONE/NEXT (Space), REDO (R), STOP (Q),
+PRACTICE (teleop without recording), RUN POLICY, Check motors, Mark bad and Upload.
+
+## Datasets
+
+All are 30 fps with `scene` + `wrist` cameras at 320x240.
+
+| Dataset | Hub (`Neevdharod/…`) | NucBox `~/hackathon/data/` | Notes |
+|---|---|---|---|
+| `so101_pick_place` | 30 eps, private | 101 eps | **Same name, different contents.** `record.sh upload` pushes only the good episodes, so the Hub copy is the clean 30-episode set. The local copy has every episode, with 71 listed in `so101_pick_place.bad`. |
+| `so101_pick_place_clean` | — | 30 eps | Local copy of the same 30 good episodes as the Hub's `so101_pick_place` |
+| `so101_pick_place_50_80` | 19 eps, private | 19 eps | The good episodes 50–80. All current ACT models and π₀.₅ runs trained on this. |
+| `so101_pick_place_90_100` | 11 eps, public | 11 eps | The latest good episodes |
+| `so101_pick_place_rejects` | 71 eps, private | 71 eps | The bad episodes, kept for reference |
+| `so101_pick_place_snap32` | — | 32 eps | A snapshot made mid-recording for a π₀.₅ test |
+| `test_run` | 2 eps, private (plus a public `test_run_20261010_175539`) | 2 eps | Pipeline test |
+
+Things to know:
+- **`so101_screwdriver_bin` doesn't exist yet.** It's the default dataset name in `record.sh`, the dashboard and
+  `pi05/`, meant for a clean re-record with a fixed bin. Until it exists, pass `DATASET=` explicitly. To train
+  on all 30 good episodes, use the Hub's `Neevdharod/so101_pick_place`.
+- The object in every recording is a screwdriver, but the `so101_pick_place*` task text says "pick up the
+  lego brick and place it in the bin". ACT ignores task text. π₀.₅ doesn't: give a π₀.₅ rollout exactly the
+  task text its dataset used.
+
+## Trained models
+
+| Model | Where | Trained on | Notes |
+|---|---|---|---|
+| `trial_act` | NucBox `~/hackathon/outputs/trial_act` | eps 15–29 | First ACT run, superseded |
+| `bc_act_50_80` | NucBox outputs, Hub `Neevdharod/act_so101_pick_place_ep50_80` | eps 50–80 | Plain fine-tune. **Best offline numbers.** |
+| `rl_act` | NucBox outputs, Hub `Neevdharod/act_so101_pick_place_awr` | eps 50–80, reward-weighted | Dashboard default and evera's *Hand over* checkpoint |
+| π₀.₅ smoke test | NucBox `~/pi05/outputs/pi05_test_run_1010_1833` | `test_run`, 20 steps | Pipeline check only |
+| π₀.₅ fine-tunes | Radeon Cloud `/workspace/pi05_outputs` | `so101_pick_place_50_80` | Lost on relaunch unless pushed to the Hub |
+
+The offline comparison is in [training/README.md](../training/README.md#offline-rl-fine-tune-runs-on-the-gmktec-gpu).
+The plain fine-tune beat AWR on the held-out episodes, but the dashboard and evera still default to `rl_act`.
+Pick one after testing both on the real arm.
+
+## Next steps
+
+1. Run `bc_act_50_80` and `rl_act` on the real arm from the dashboard and record their success rates.
+2. Point the dashboard default and `ACT_PICK` in `evera/actions.js` at whichever one wins.
+3. Retrain ACT on all 30 good episodes (`Neevdharod/so101_pick_place` on the Hub), not just the 19 in eps 50–80.
+4. Push any π₀.₅ checkpoint worth keeping from Radeon Cloud to the Hub before the instance stops.
+5. For the hackathon submission: publish code, datasets, models and a demo video (see [HACKATHON.md](HACKATHON.md)).
 
 ## Hardware facts (learned the hard way)
-- **Follower (gripper arm)** = USB serial `5C4C125836`, **leader (handle arm)** = `5C4C128274`. Scripts use `/dev/serial/by-id/...` because `/dev/ttyACM0/1` swap on replug.
-- Calibration ids: `my_follower`, `my_leader`. If LeRobot ever says "Mismatch between calibration values... Press ENTER", **don't press Enter blindly**: it writes that file's calibration to whatever arm is on that port.
-- Cameras: **top = Limelight 3A** (USB network device at 172.29.0.1, MJPEG on :5800) via `robot/limelight_zmq.py` -> ZMQ port 5555; **wrist = icSpring USB cam** (`/dev/v4l/by-id/usb-icSpring_icspring_camera_202404160005-video-index0`) -> ZMQ 5556. Both 320x240. In datasets the cameras are named `scene` and `wrist`.
-- **Camera profile (tuned Oct 10 evening, reapplied by `start_limelight.sh` on every start):**
-  - Limelight: viewfinder pipeline at 640x480 @ 90 fps processing (was 1280x960 @ 22), 60 Hz flicker correction, crosshair and fps overlay hidden. Its MJPEG stream still tops out at ~24 fps.
-  - Wrist cam: 60 Hz anti-flicker (was 50 Hz), fixed exposure 110 (11 ms) and white balance 3000 K (both were auto). 0% clipped pixels, down from 4.5%.
-  - The wrist cam only delivers **20 fps** in every mode (hardware limit).
-  - Tools: `robot/limelight_ws.py get|set|decorations|net` and `robot/v4l2_ctl.py <dev> [name=value]`.
-  - **Don't restart the Limelight's vision server**: it once came back on an AprilTag pipeline (grayscale, LED on). If that happens, rerun `start_limelight.sh`.
-- Both arms read **~12.3 V**. Seeed says the leader should be 5 V on Pro kits: confirm with the AMD desk.
-- **The gripper overloads if it squeezes at the end of an episode**, which locks motor #6. Always release (open) before the episode ends. Fix: unplug the follower's power barrel 5 s.
-- Whole USB hub has dropped out a few times: keep arms plugged directly into the GMKtec if possible; don't touch cables while recording.
 
-## Status right now
-- ⛔ **BLOCKER: follower gripper motor #6 not answering on any ID** (after an overload). Next: power-cycle follower → reseat the 3-pin cable between motor #5 (wrist roll) and #6 (gripper) → if still dead, get a spare STS3215 or a spare follower arm from the AMD hardware desk (new servo needs ID 6 + gripper recalibration).
-- Old dataset `Neevdharod/so101_pick_place` (local `~/hackathon/data/so101_pick_place`, 32+ eps): **don't train on it.** Review of eps 0–31: grasps are fine in 30/32, but the screwdriver is dropped somewhere different every time (release pan std 22°, no bin), eps 1/6/7/8/12 end still squeezing the gripper, and the task text says "lego brick".
-- **New dataset `Neevdharod/so101_screwdriver_bin`** (record.sh + dashboard default): task "pick up the screwdriver and place it in the bin", 25 s cap. Target 50 good.
+- **Follower** (gripper arm) is USB serial `5C4C125836`, **leader** (handle arm) is `5C4C128274`.
+- **The gripper overload-locks if it is still squeezing when an episode ends.** That takes motor #6 offline.
+  Always open the gripper before DONE. To recover, unplug the follower's power barrel for 5 s. It happened
+  on Saturday evening; recording resumed afterwards.
+- The whole USB hub has dropped out a few times. Plug the arms straight into the NucBox, and don't touch
+  cables while recording.
+- The wrist cam runs at 20 fps unless asked for 30. `limelight_zmq.py` now sets 30 fps, and its log prints
+  the capture mode on start. Episodes recorded before that fix have a 20 fps wrist feed in a 30 fps dataset.
+- **Don't restart the Limelight's vision server.** It once came back on an AprilTag pipeline (grayscale, LED
+  on). If that happens, rerun `start_limelight.sh`.
+- The NucBox is on Wi-Fi only (~5 MB/s from the Hub). Long SSH sessions sometimes stall, so run long jobs
+  with `nohup` and read their logs.
 
 ## Recording protocol (what makes the data good)
-1. **One taped-down bin**, the same spot every episode. A consistent drop spot matters most: ACT averages demos that disagree.
-2. **4–5 taped start spots** for the screwdriver, ~10 demos each, handle pointing the same way.
-3. Same rest pose at start and end. **Open the gripper wide** (the old data opened only ~10/100) and fully release before DONE.
+
+1. **One taped-down bin** in the same spot every episode. A consistent drop spot matters most, because ACT
+   averages demos that disagree.
+2. **4–5 taped start spots** for the object, ~10 demos each, with it pointing the same way.
+3. The same rest pose at the start and end. **Open the gripper wide** and fully release before DONE.
 4. One smooth reach → grab → lift → drop → return. REDO anything fumbled.
-5. Clear table, no people or hands in view, same lighting. Wrist cam exposure/WB are now locked by the bridge; after a restart, copy the `Pin them:` line from `~/cam_wrist.log` so every session uses the same values.
-6. Every ~10 episodes: `bash ~/hackathon/robot/record.sh review`. It flags NO_GRASP / NOT_RELEASED / PLACE_OFF / START_NOT_REST etc. and writes contact sheets to `~/hackathon/review/`. Aim for drop-spot pan spread < 5°.
-7. Optional: turn off the Limelight crosshair in its web UI (http://172.29.0.1:5801 from the GMKtec), **without moving the camera**, before starting the new dataset.
-- `Neevdharod/test_run` (2 eps) on the Hub, private: just a pipeline test.
-- Hugging Face on the GMKtec is logged in as **Neevdharod**.
-
-## Training plan (after ~50 good episodes)
-- **ACT** (guaranteed baseline) on Radeon Cloud: upload `lerobot_src.tgz` (GMKtec's exact LeRobot 0.6.2 source) + `training/` → `bash training/cloud_setup.sh` (~1 min; uses the image's torch 2.9.1+rocm) → `bash training/train.sh real so101_screwdriver_bin`. Open issue: torchcodec 0.11 fails to load on the cloud image's torch; fall back to PyAV (`--dataset.video_backend=pyav`) if pinning `torchcodec==0.9.*` doesn't work.
-  - LeRobot's train script sets `cudnn.benchmark=True`, which on ROCm stalls for minutes (MIOpen exhaustive search). cloud_setup.sh patches it off.
-  - Measured: ~3.3 s/step at batch 64 with 640x480; 320x240 should be much faster.
-  - Cloud disk is wiped between launches: push checkpoints to the Hub.
-- **Stretch:** pi0.5 fine-tune overnight on the GMKtec (69 GB GPU memory), or try **FLUX 3 Action SO-101** zero-shot (LeRobot 0.6.2 supports `flux3`; ~39 GB download; expects `scene` + `wrist` cameras).
-
-## Files
-- `robot/`: GMKtec-side: `dashboard.py`, `record.sh`, `limelight_zmq.py`, `start_limelight.sh`, `check_arms.py`, `test_camera.py`
-- `training/`: cloud-side: `cloud_setup.sh`, `train.sh`, `check_dataset.py`, `push_checkpoint.sh`, `bench.py`
-- `evera/`: iPad control app (served by `dashboard.py` at `/evera/`)
-- `robot/calibration/`: backup of the `my_follower` / `my_leader` calibration files from the GMKtec
-- `docs/TEAM_CONTEXT.md` (team context, detection plan), `docs/ARM_RUNBOOK.md` (setup steps), this file.
+5. A clear table, no people or hands in view, the same lighting. Camera profiles are locked by `start_limelight.sh`.
+6. Every ~10 episodes, run `bash ~/hackathon/robot/record.sh review`. It flags NO_GRASP / NOT_RELEASED /
+   PLACE_OFF / START_NOT_REST and writes contact sheets to `~/hackathon/review/`. Aim for a drop-spot pan
+   spread under 5°.

@@ -2,7 +2,12 @@
 
 Fine-tune and run LeRobot's π₀.₅ (`pi05`) policy on the SO-101 arm, entirely on the AMD NucBox
 (GMKtec EVO-X2, Radeon 8060S iGPU, ROCm). Training data is the teleop dataset recorded with
-`~/hackathon/robot/record.sh` (`Neevdharod/so101_pick_place`, cameras `scene` + `wrist`).
+`~/hackathon/robot/record.sh` (cameras `scene` + `wrist`).
+
+The scripts default to `DATASET=so101_screwdriver_bin`, which hasn't been recorded yet. Until it exists, pass a dataset that does,
+such as `DATASET=so101_pick_place_50_80` (see [docs/HANDOFF.md](../docs/HANDOFF.md#datasets)). `env.sh` defaults `TASK` to the
+screwdriver text. A checkpoint trained on `so101_pick_place*` needs that dataset's own text instead:
+`TASK="pick up the lego brick and place it in the bin" bash rollout.sh`.
 
 Copy the scripts to the NucBox from a laptop checkout with `GMK=aup@<GMKTEC_IP> bash pi05/sync.sh` (lands in `~/pi05`).
 

@@ -12,7 +12,7 @@ import sys
 import urllib.error
 import urllib.request
 
-REQUIRED_VERSION = "v3.0"  # LeRobot v0.4.1 refuses datasets without this tag
+REQUIRED_VERSION = "v3.0"  # LeRobot (0.4.1 through 0.6.2) refuses datasets without this tag
 MIN_EPISODES = 30
 
 
