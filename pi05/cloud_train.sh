@@ -32,6 +32,9 @@ if pgrep -f "lerobot-train.*pi05_outputs" >/dev/null; then
   echo "pi0.5 training is already running: tail -f $LOG"; exit 0
 fi
 
+# torchcodec on this image aborts the whole process with std::bad_alloc on import; decode with PyAV instead.
+if pip show -q torchcodec 2>/dev/null; then pip uninstall -y -q torchcodec; fi
+python -c "import av" 2>/dev/null || pip install -q -c /workspace/torch_pin.txt av
 if ! python -c "import scipy, sentencepiece, transformers" 2>/dev/null; then
   echo "== installing pi0.5 deps (pinned to the existing ROCm torch)"
   pip install -q --timeout 300 --retries 10 -c /workspace/torch_pin.txt \
@@ -63,7 +66,7 @@ if [ -f "$OUT/checkpoints/last/pretrained_model/train_config.json" ]; then
 else
   rm -rf "$OUT"  # a run that died before its first checkpoint
   ARGS=(
-    --dataset.repo_id="$DATASET" --dataset.root="$DATA_ROOT/$NAME"
+    --dataset.repo_id="$DATASET" --dataset.root="$DATA_ROOT/$NAME" --dataset.video_backend=pyav
     --policy.type=pi05
     --policy.pretrained_path=lerobot/pi05_base
     --policy.dtype=bfloat16
