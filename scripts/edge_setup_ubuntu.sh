@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Edge setup for the GMKtec (Ryzen AI Max+) — drives the SO-101 arms and runs inference.
 # Based on AMD's hackathon QuickStart: Ubuntu 24.04 + ROCm 6.3 + PyTorch 2.7.1 + LeRobot v0.4.1.
+# Reference only: the NucBox actually runs Ubuntu 26.04 + ROCm 7.2 + LeRobot 0.6.2 (see docs/SETUP.md).
 #
 # Run in two stages (stage 1 needs a reboot):
 #   bash edge_setup_ubuntu.sh rocm     # installs ROCm userspace, then reboot
@@ -59,4 +60,4 @@ echo "=== checks ==="
 python -c "import torch; print('torch', torch.__version__, '| gpu:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else '(CPU only)')"
 pip list 2>/dev/null | grep -E "^(lerobot|torch) "
 ffmpeg -hide_banner -encoders 2>/dev/null | grep -q svtav1 && echo "ffmpeg: libsvtav1 OK" || echo "ffmpeg: libsvtav1 MISSING"
-echo "Done. Log out/in once so the dialout/render groups apply, then see RUNBOOK.md."
+echo "Done. Log out/in once so the dialout/render groups apply, then see docs/SETUP.md."

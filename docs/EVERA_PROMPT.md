@@ -1,5 +1,9 @@
 # Build EVERA: a JARVIS-style iPad control app for a robot arm
 
+> **Historical build spec.** This is the brief the iPad app was originally built from. The shipped app
+> differs in places: three.js is vendored instead of loaded from jsdelivr, and each mode is a `{task, ckpt,
+> secs, motion}` entry. For current behavior see [evera/README.md](../evera/README.md).
+
 You are building **EVERA**, a futuristic "Tony Stark workshop" assistant that runs on an iPad propped next to a desktop robot arm (SO-101, 6-DOF, LeRobot). The user taps a tool, or says "EVERA, grab the soldering iron", and the arm runs that action. EVERA replies out loud in a witty British-butler voice. This is a hackathon demo that judges will see live, so it has to **look incredible and never crash**.
 
 Read everything below before writing code.

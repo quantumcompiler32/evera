@@ -11,7 +11,7 @@ scp -r evera aup@<GMKTEC_IP>:~/hackathon/
 scp robot/dashboard.py aup@<GMKTEC_IP>:~/hackathon/robot/dashboard.py
 ```
 
-Then restart the dashboard (same command as in HANDOFF.md):
+Then restart the dashboard (same command as in [docs/HANDOFF.md](../docs/HANDOFF.md)):
 
 ```bash
 ssh aup@<GMKTEC_IP> 'cd ~/hackathon && source ~/miniforge3/etc/profile.d/conda.sh && conda activate lerobot && kill $(cat ~/dashboard.pid); setsid nohup python robot/dashboard.py > ~/dashboard.log 2>&1 < /dev/null & echo $! > ~/dashboard.pid'
@@ -64,7 +64,7 @@ Every mode is `{task, ckpt, secs, motion}` and gets sent as `POST /api/policy {c
 - **`secs`** is how long the policy runs.
 - **`motion`** is only how the 3D arm animates: `handover | press | hold | dock`.
 
-Right now only *Soldering iron → Hand over* points at a real model: `rl_act`, the Pinecil pick-and-place ACT. Point other modes at new checkpoints as they get trained.
+Right now only *Soldering iron → Hand over* points at a real model (`ACT_PICK`): `rl_act`, the pick-and-place ACT trained on episodes 50–80. ACT ignores `task`, so it does the same pick whatever it's asked. Point other modes at new checkpoints as they get trained. Which checkpoint is best is tracked in [docs/HANDOFF.md](../docs/HANDOFF.md#trained-models).
 
 ## Simulator
 
