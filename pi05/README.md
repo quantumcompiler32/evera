@@ -4,7 +4,7 @@ Fine-tune and run LeRobot's π₀.₅ (`pi05`) policy on the SO-101 arm, entirel
 (GMKtec EVO-X2, Radeon 8060S iGPU, ROCm). Training data is the teleop dataset recorded with
 `~/hackathon/robot/record.sh` (`Neevdharod/so101_pick_place`, cameras `scene` + `wrist`).
 
-Copy the scripts to the NucBox from a laptop checkout with `bash pi05/sync.sh` (lands in `~/pi05`).
+Copy the scripts to the NucBox from a laptop checkout with `GMK=aup@<GMKTEC_IP> bash pi05/sync.sh` (lands in `~/pi05`).
 
 | Script          | What it does                                                                        |
 | --------------- | ----------------------------------------------------------------------------------- |

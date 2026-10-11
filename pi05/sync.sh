@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# Copy these scripts from the Mac to ~/pi05 on the GMKtec:  bash pi05/sync.sh
+# Copy these scripts from the Mac to ~/pi05 on the GMKtec:  GMK=aup@<GMKTEC_IP> bash pi05/sync.sh
 set -euo pipefail
-rsync -av --exclude outputs "$(dirname "$0")/" "${GMK:-aup@169.233.72.19}:pi05/"
+rsync -av --exclude outputs "$(dirname "$0")/" "${GMK:?set GMK=aup@<GMKTEC_IP> first}:pi05/"
