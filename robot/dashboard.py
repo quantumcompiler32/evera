@@ -182,9 +182,9 @@ def replay_episodes():
 def pick_replay_episode(n_episodes):
     """Which episode (0..n_episodes-1) of REPLAY_DATASET the next replay plays back.
 
-    Always the same one: replay is open loop, so the screwdriver must start where it did in that
-    episode. Episode 4 is the smoothest clean take (review_episodes.py: no pauses, start at rest)."""
-    return min(4, n_episodes - 1)
+    The newest one: record a demo with the bench as it is now, and that is what plays back.
+    Replay is open loop, so the object must start where it did when that episode was recorded."""
+    return n_episodes - 1
 
 
 def start_replay(episode=None):
