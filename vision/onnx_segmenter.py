@@ -7,9 +7,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 import onnxruntime as ort
+try:
+    from .class_map import LEGACY_CLASSES, SUPPORTED_CLASS_ORDERS
+except ImportError:  # direct script execution from vision/
+    from class_map import LEGACY_CLASSES, SUPPORTED_CLASS_ORDERS
 
 
-CLASS_NAMES = ("raspberry_pi", "arduino", "pinecil", "wire")
+CLASS_NAMES = LEGACY_CLASSES
 INPUT_SIZE = 640
 
 
@@ -36,12 +40,16 @@ class Segmenter:
         outputs = self.session.get_outputs()
         if len(inputs) != 1 or inputs[0].shape != [1, 3, INPUT_SIZE, INPUT_SIZE]:
             raise ValueError("Expected a static 640x640 YOLO11 segmentation ONNX input")
-        if len(outputs) != 2 or outputs[0].shape != [1, 40, 8400] or outputs[1].shape != [1, 32, 160, 160]:
-            raise ValueError("ONNX outputs do not match the four-class YOLO11n-seg architecture")
+        if len(outputs) != 2 or outputs[1].shape != [1, 32, 160, 160]:
+            raise ValueError("ONNX outputs do not match YOLO11n-seg mask prototypes")
         metadata = self.session.get_modelmeta().custom_metadata_map
         names = literal_eval(metadata.get("names", "{}"))
-        if tuple(names.get(index) for index in range(len(CLASS_NAMES))) != CLASS_NAMES:
+        class_names = tuple(names.get(index) for index in range(len(names)))
+        if class_names not in SUPPORTED_CLASS_ORDERS:
             raise ValueError("ONNX class names or order do not match Evera's mask classes")
+        if outputs[0].shape != [1, 36 + len(class_names), 8400]:
+            raise ValueError("ONNX prediction channels do not match the class map")
+        self.class_names = class_names
         self.input_name = inputs[0].name
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
@@ -62,7 +70,8 @@ class Segmenter:
         tensor = np.ascontiguousarray(letterboxed.transpose(2, 0, 1)[None], dtype=np.float32) / 255.0
         prediction, prototype = self.session.run(None, {self.input_name: tensor})
         prediction = prediction[0].T
-        scores = prediction[:, 4:8]
+        mask_offset = 4 + len(self.class_names)
+        scores = prediction[:, 4:mask_offset]
         class_ids = scores.argmax(axis=1)
         confidences = scores[np.arange(len(scores)), class_ids]
         candidates = np.flatnonzero(confidences >= self.conf_threshold)
@@ -75,7 +84,7 @@ class Segmenter:
         boxes[:, 2] += boxes[:, 0]
         boxes[:, 3] += boxes[:, 1]
         keep = []
-        for class_id in range(len(CLASS_NAMES)):
+        for class_id in range(len(self.class_names)):
             group = np.flatnonzero(class_ids[candidates] == class_id)
             if not len(group):
                 continue
@@ -119,7 +128,7 @@ class Segmenter:
             x1, y1, x2, y2 = box
             if x2 <= x1 or y2 <= y1:
                 continue
-            logits = (prediction[index, 8:] @ proto).reshape(160, 160)
+            logits = (prediction[index, mask_offset:] @ proto).reshape(160, 160)
             logits = cv2.resize(logits, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_LINEAR)
             logits = logits[pad_y:pad_y + new_height, pad_x:pad_x + new_width]
             logits = cv2.resize(logits, (width, height), interpolation=cv2.INTER_LINEAR)
@@ -130,7 +139,7 @@ class Segmenter:
             if binary.sum() < 4:
                 continue
             results.append(InstanceMask(
-                CLASS_NAMES[int(class_ids[index])], float(confidences[index]),
+                self.class_names[int(class_ids[index])], float(confidences[index]),
                 (float(x1 / width), float(y1 / height), float(x2 / width), float(y2 / height)),
                 binary,
             ))

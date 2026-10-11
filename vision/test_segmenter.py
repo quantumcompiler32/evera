@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from onnx_segmenter import CLASS_NAMES, InstanceMask, Segmenter
+from onnx_segmenter import InstanceMask, Segmenter
 
 
 def main() -> None:
@@ -30,7 +30,7 @@ def main() -> None:
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         for item in segmenter.segment(rgb):
             assert isinstance(item, InstanceMask)
-            assert item.cls in CLASS_NAMES
+            assert item.cls in segmenter.class_names
             assert 0 <= item.conf <= 1
             x1, y1, x2, y2 = item.box
             assert 0 <= x1 < x2 <= 1 and 0 <= y1 < y2 <= 1

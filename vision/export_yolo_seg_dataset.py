@@ -13,7 +13,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from segmentation_dataset import CLASS_NAMES
+from class_map import SUPPORTED_CLASS_ORDERS
 
 
 def mask_polygon(mask: np.ndarray) -> tuple[list[float] | None, float]:
@@ -55,8 +55,9 @@ def main() -> None:
     if output.exists() and any(output.iterdir()):
         parser.error(f"Output already contains files: {output}")
     manifest = json.loads((dataset / "manifest.json").read_text())
-    if tuple(manifest["classes"]) != CLASS_NAMES[1:]:
-        parser.error("Dataset classes do not match the four-class mask model")
+    classes = tuple(manifest["classes"])
+    if classes not in SUPPORTED_CLASS_ORDERS:
+        parser.error("Dataset classes do not match a supported append-only class order")
     for split in ("train", "val", "test"):
         (output / "images" / split).mkdir(parents=True, exist_ok=True)
         (output / "labels" / split).mkdir(parents=True, exist_ok=True)
@@ -85,7 +86,7 @@ def main() -> None:
         item_counts = Counter()
         skip_image = False
         for number, instance in enumerate(item["instances"]):
-            if instance["class"] not in CLASS_NAMES[1:]:
+            if instance["class"] not in classes:
                 raise ValueError(f"Unknown class: {instance['class']}")
             mask = cv2.imread(str(dataset / instance["mask"]), cv2.IMREAD_GRAYSCALE)
             if mask is None or mask.shape != (height, width):
@@ -99,7 +100,7 @@ def main() -> None:
                 warnings.append(f"{item['image']} instance {number}: skipped image; polygon covers {coverage:.1%} of mask")
                 skip_image = True
                 break
-            class_id = CLASS_NAMES.index(instance["class"]) - 1
+            class_id = classes.index(instance["class"])
             labels.append(" ".join([str(class_id)] + [f"{coordinate:.6f}" for coordinate in polygon]))
             item_counts[f"{split}:{instance['class']}"] += 1
         if skip_image:
@@ -115,7 +116,7 @@ def main() -> None:
     for split, names in paths.items():
         (output / f"{split}.txt").write_text("\n".join(names) + ("\n" if names else ""))
     lines = [f"path: {json.dumps(str(output))}", "train: train.txt", "val: val.txt", "names:"]
-    lines += [f"  {index}: {name}" for index, name in enumerate(CLASS_NAMES[1:])]
+    lines += [f"  {index}: {name}" for index, name in enumerate(classes)]
     (output / "data.yaml").write_text("\n".join(lines) + "\n")
     (output / "conversion_report.json").write_text(json.dumps({
         "instances": dict(counts), "warnings": warnings,

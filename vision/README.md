@@ -1,5 +1,29 @@
 # Workshop instance segmentation
 
+## Next checkpoint: tape measure and multimeter
+
+The append-only YOLO11n-seg class order for the next checkpoint is
+`0 raspberry_pi`, `1 arduino`, `2 pinecil`, `3 wire`, `4 tape_measure`,
+`5 multimeter`. This supersedes the earlier three-class plan below. Coordinate
+tape-measure labels with this exact order before training. The existing
+four-class ONNX file remains a separate provisional checkpoint; no six-class
+weights have been trained by this change.
+
+Use the existing NucBox `camera1` 640×480 relay and save raw recordings and
+weights outside Git. Record a multimeter session with varied positions and
+rotations, screen up, partial occlusion, adjacent existing objects, and a few
+frames without the meter. Select sharp representative frames with
+`vision_training/select_frames.py`. Reserve another whole recording session
+for testing; do not split neighboring frames across train and test.
+
+For `vision_training/propose_multimeter.py`, supply JSON mapping **every**
+selected timestamped JPG filename to body boxes `[[x1, y1, x2, y2]]`, or `[]`
+when the meter is absent. Enclose the multimeter housing only; loose probes
+and leads are outside the target. Inspect and correct every proposal, including
+any lead mistakenly captured by SAM, and add missed objects before marking a
+frame reviewed. Report reliability only from reviewed labels in the separate
+test session.
+
 The current **provisional** live model is a YOLO11n-seg convolutional network
 trained on proposals and exported to ONNX. `onnx_segmenter.py` runs masks on the
 NucBox CPU using only NumPy, ONNX Runtime, and OpenCV. Its existing ONNX file
