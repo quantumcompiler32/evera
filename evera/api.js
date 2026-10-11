@@ -1,5 +1,5 @@
 // Talks to the GMKtec dashboard (robot/dashboard.py). Tool actions can run on a simulator
-// (link: 'sim') while teleop, STOP and the cameras use the real arm.
+// (link: 'sim') while teleop, demo replays, STOP and the cameras use the real arm.
 //
 //   GET  /api/status           {state, mode, running, message, cams:{top, wrist}, ...}
 //   POST /api/policy           {ckpt, task, secs} → "started" | error string
@@ -89,9 +89,14 @@ export class Backend {
     return this.postReal(path, body);
   }
 
-  run(mode) {
-    if (mode.replay) return this.post('/api/replay', { secs: mode.secs });
-    return this.post('/api/policy', { ckpt: mode.ckpt || '', task: mode.task, secs: mode.secs });
+  async run(mode) {
+    if (!mode.replay) return this.post('/api/policy', { ckpt: mode.ckpt || '', task: mode.task, secs: mode.secs });
+    // A replay is a known-good real-arm action: like teleop, it goes to the real arm whenever that
+    // answers, even when tool actions are set to the simulator (link: 'sim').
+    if (this.forceSim || !this.real) return this.post('/api/replay', { secs: mode.secs });
+    const res = await this.postReal('/api/replay', { secs: mode.secs });
+    if (res === 'started') this.realUntil = Date.now() + 8000;
+    return res;
   }
 
   // Teleop = the dashboard's practice mode: the leader arm drives the real follower.
