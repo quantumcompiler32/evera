@@ -9,6 +9,8 @@
 #
 #   bash /workspace/cloud_train.sh                     # Neevdharod/so101_screwdriver_bin
 #   DATASET=Neevdharod/other STEPS=2000 bash /workspace/cloud_train.sh
+#   INIT_FROM=/workspace/pi05_outputs/<run>/checkpoints/001750/pretrained_model DATASET=... STEPS=1000 bash ...
+#                                                      # continue from our own checkpoint instead of pi05_base
 #   tail -f /workspace/pi05_train.log
 # Rerun the same command after an instance restart: it resumes from the last checkpoint if the disk kept it.
 set -euo pipefail
@@ -19,6 +21,8 @@ mkdir -p "$TMPDIR" "$HF_HOME/hub"
 
 DATASET="${DATASET:-Neevdharod/so101_screwdriver_bin}"
 STEPS="${STEPS:-3000}"
+INIT_FROM="${INIT_FROM:-lerobot/pi05_base}"
+SAVE="${SAVE:-500}"  # each checkpoint is ~11 GB (9 GB model + optimizer state) on a 100 GB disk
 NAME="${DATASET#*/}"
 DATA_ROOT=/workspace/pi05_data
 OUT="/workspace/pi05_outputs/$NAME"
@@ -69,7 +73,7 @@ else
   ARGS=(
     --dataset.repo_id="$DATASET" --dataset.root="$DATA_ROOT/$NAME" --dataset.video_backend=pyav
     --policy.type=pi05
-    --policy.pretrained_path=lerobot/pi05_base
+    --policy.pretrained_path="$INIT_FROM"
     --policy.dtype=bfloat16
     --policy.device=cuda
     --policy.gradient_checkpointing=false
@@ -79,10 +83,14 @@ else
     --batch_size="$BATCH"
     --num_workers=8
     --steps="$STEPS"
-    --save_freq=250
+    --save_freq="$SAVE"
     --log_freq=10
     --output_dir="$OUT" --job_name="pi05_$NAME"
   )
 fi
 nohup lerobot-train "${ARGS[@]}" > "$LOG" 2>&1 &
-echo "== training in the background (pid $!). Watch it with: tail -f $LOG"
+PID=$!
+# Keep only the two newest checkpoints (the newest may still be mid-save), so the disk never fills up.
+prune() { ls -d "$OUT"/checkpoints/[0-9]* 2>/dev/null | sort | head -n -2 | xargs -r rm -rf; }
+nohup bash -c "$(declare -f prune); OUT='$OUT'; while kill -0 $PID 2>/dev/null; do sleep 60; prune; done" >/dev/null 2>&1 &
+echo "== training in the background (pid $PID). Watch it with: tail -f $LOG"
