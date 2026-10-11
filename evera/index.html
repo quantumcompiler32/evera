@@ -32,6 +32,7 @@
     </div>
     <div class="hright">
       <div id="runpill" class="runpill" aria-live="polite"><span class="rp-dot"></span><span id="runtext"></span></div>
+      <button id="teleop" class="telebtn" aria-label="Toggle teleop"><span class="tl-on">Teleop</span><span class="tl-off">End teleop</span></button>
       <button id="hstop" class="hstop" aria-label="Emergency stop"><span class="sq"></span>Stop</button>
       <div class="conn" id="conn"><span class="dot"></span><span id="conntext">Connecting</span></div>
       <div class="vsep"></div>
@@ -54,7 +55,9 @@
       </svg>
       <div id="tools"></div>
       <div id="modes"></div>
+      <div id="telebanner" class="telebanner"><span class="tb-dot"></span><b>Live teleop</b> · move the leader arm, the follower copies it</div>
       <div id="armlabel" class="armlabel">SO-101 · Follower</div>
+      <button id="release" class="releasebtn" aria-label="Release the tool">Got it · release</button>
       <button id="bigstop" class="bigstop" aria-label="Emergency stop"><span class="sq"></span>STOP</button>
       <div id="armload" class="armload"><div class="al-ring"></div><span id="armpct">Loading arm</span></div>
     </section>
@@ -71,7 +74,7 @@
       <div class="stitle convo-title">Conversation</div>
       <div id="convo" aria-live="polite"></div>
       <div id="vc" class="vc idle">
-        <div class="vhead"><span class="vdot"></span><span id="vstate">Ready</span><button id="wakebtn" class="wakebtn" aria-label="Toggle wake word"></button></div>
+        <div class="vhead"><span class="vdot"></span><span id="vstate">Ready</span><span id="brainbadge" class="brainbadge">KEYWORD MODE</span><button id="wakebtn" class="wakebtn" aria-label="Toggle wake word"></button></div>
         <canvas id="wave" aria-hidden="true"></canvas>
         <div class="vfoot">
           <div class="vtexts"><div id="vtext" class="vtext"></div><div id="vhint" class="vhint">Hold to talk</div></div>
@@ -86,10 +89,11 @@
   <div class="sheet-card" role="dialog" aria-label="Settings">
     <div class="sh-head"><span>Settings</span><button id="sh-close" class="iconbtn" aria-label="Close settings"></button></div>
     <div class="sh-body">
-      <div class="sh-group">Brain · OpenAI</div>
-      <label>API key<input id="s-openaiKey" type="password" autocomplete="off" placeholder="sk-…"></label>
-      <label>Chat model<input id="s-openaiModel" list="dl-models" autocomplete="off"></label>
-      <datalist id="dl-models"><option value="gpt-4.1-mini"><option value="gpt-4o-mini"><option value="gpt-4.1"><option value="gpt-5-mini"></datalist>
+      <div class="sh-group">Brain</div>
+      <label>Provider<select id="s-llmProvider"><option value="groq">Groq (fast, web research)</option><option value="openai">OpenAI (ChatGPT)</option><option value="xai">xAI (Grok)</option></select></label>
+      <label>API key<input id="s-openaiKey" type="password" autocomplete="off" placeholder="sk-… or xai-…"></label>
+      <label>Chat model<input id="s-openaiModel" list="dl-models" autocomplete="off" placeholder="default for the provider"></label>
+      <datalist id="dl-models"><option value="gpt-4.1-mini"><option value="gpt-4o-mini"><option value="grok-4.20-0309-non-reasoning"><option value="grok-4.7"></datalist>
       <label>Transcription model<input id="s-sttModel" list="dl-stt" autocomplete="off"></label>
       <datalist id="dl-stt"><option value="gpt-4o-mini-transcribe"><option value="gpt-4o-transcribe"><option value="whisper-1"></datalist>
       <div class="sh-group">Voice · ElevenLabs</div>
@@ -102,7 +106,7 @@
       <label>Dashboard URL<input id="s-backend" autocomplete="off" placeholder="blank = this server"></label>
       <div class="sh-btns"><button id="s-test" class="pill">Test voice</button><button id="s-view" class="pill">Reset 3D view</button></div>
       <div id="s-diag" class="diag"></div>
-      <p class="fine">Keys stay on this iPad (browser storage). They are never in the code.</p>
+      <p class="fine">Keys come from keys.local.js (not committed) or are typed here and kept on this iPad.</p>
     </div>
   </div>
 </div>

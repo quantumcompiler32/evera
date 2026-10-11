@@ -366,6 +366,18 @@ export class Arm3D {
     this.startTimeline(keys, loopFrom);
   }
 
+  // Teleop: the human drives the real arm. No joint feed yet, so stand ready and breathe.
+  teleop() {
+    this.mode = 'teleop';
+    this.startTimeline([{ pose: { ...P.stand, shoulder_pan: 0 }, dur: 1.6 }]);
+  }
+
+  // Let go: open the gripper where it is, then fold back to rest.
+  release() {
+    this.mode = 'home';
+    this.startTimeline([{ pose: { ...this.cur, gripper: 60 }, dur: 0.6 }, { pose: { ...P.rest, shoulder_pan: 0 }, dur: 2.2 }], null, () => { this.mode = 'idle'; });
+  }
+
   // Fold back in to rest (the real arm returns to its start pose after every run).
   home() {
     this.mode = 'home';
@@ -495,7 +507,7 @@ export class Arm3D {
       else if (this.mode === 'frozen') goal = this.target;
       else goal = { ...P.rest, shoulder_pan: 0 };
       const g = { ...goal };
-      if (this.mode === 'idle' || this.mode === 'aim') {
+      if (this.mode === 'idle' || this.mode === 'aim' || this.mode === 'teleop') {
         const amp = this.mode === 'idle' ? 0.6 : 1;
         g.shoulder_lift += Math.sin(t * 1.1) * 1.4 * amp;
         g.elbow_flex -= Math.sin(t * 1.1 + 0.6) * 1.4 * amp;

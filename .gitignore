@@ -19,3 +19,6 @@ training/lerobot_src.tgz
 
 # local Claude Code config
 .claude/
+
+# Local API keys for the evera app
+evera/keys.local.js

@@ -1,8 +1,9 @@
-// Talks to the GMKtec dashboard (robot/dashboard.py). Falls back to a simulator so the whole
-// UI can be demoed without the arm (?sim=1, or Settings → Robot link → Simulator).
+// Talks to the GMKtec dashboard (robot/dashboard.py). Tool actions can run on a simulator
+// (link: 'sim') while teleop, STOP and the cameras use the real arm.
 //
 //   GET  /api/status           {state, mode, running, message, cams:{top, wrist}, ...}
 //   POST /api/policy           {ckpt, task, secs} → "started" | error string
+//   POST /api/practice         teleop: the leader arm drives the follower (nothing recorded)
 //   POST /api/key {k:"q"}      stop (SIGINT); the arm returns to its start pose
 //   GET  /stream/top|wrist     MJPEG
 
@@ -13,16 +14,27 @@ export class Backend {
     this.fails = 0;
     this.everConnected = false;
     this.sim = new Sim();
+    this.real = null; // last status from the real dashboard (null = unreachable)
+    this.realUntil = 0; // show the real dashboard's state until then (after we started something there)
     this.status = { connected: false, sim: false, state: 'idle', running: false, message: '', cams: {} };
   }
 
   get base() {
-    return (this.getSettings().backend || '').replace(/\/$/, '');
+    const b = (this.getSettings().backend || '').replace(/\/$/, '');
+    // An https page can't load http resources: then the server in front (serve.py / tunnel) proxies.
+    if (location.protocol === 'https:' && b.startsWith('http:')) return '';
+    return b;
   }
 
+  get forceSim() {
+    return new URLSearchParams(location.search).has('sim');
+  }
+
+  // Tool actions (/api/policy) go to the simulator when link is 'sim'. Teleop and STOP always
+  // go to the real arm when it's reachable.
   get useSim() {
     const link = this.getSettings().link || 'auto';
-    if (new URLSearchParams(location.search).has('sim') || link === 'sim') return true;
+    if (this.forceSim || link === 'sim') return true;
     if (link === 'real') return false;
     // auto: simulate only if the real arm has never answered. Once it has, a dropout shows
     // "Offline" instead, so commands never silently go to the simulator mid-demo.
@@ -39,7 +51,7 @@ export class Backend {
 
   async poll() {
     let real = null;
-    if (!(new URLSearchParams(location.search).has('sim') || this.getSettings().link === 'sim')) {
+    if (!this.forceSim) {
       try {
         const ctl = new AbortController();
         const to = setTimeout(() => ctl.abort(), 5000);
@@ -53,32 +65,54 @@ export class Backend {
         this.fails++;
       }
     }
-    const s = real
-      ? { connected: true, sim: false, state: real.state, mode: real.mode, running: real.running, message: real.message, cams: real.cams || {} }
-      : this.useSim
-        ? { connected: false, sim: true, ...this.sim.status() }
-        : { connected: false, sim: false, state: 'offline', running: false, message: 'Arm offline', cams: {} };
+    this.real = real;
+    if (real?.running) this.realUntil = Math.max(this.realUntil, Date.now() + 8000);
+    const fromReal = (x) => ({ connected: true, sim: false, robot: true, state: x.state, mode: x.mode, running: x.running, message: x.message, cams: x.cams || {} });
+    let s;
+    if (real && (!this.useSim || Date.now() < this.realUntil)) s = fromReal(real); // real arm busy (e.g. teleop)
+    else if (this.useSim) s = { connected: false, sim: true, robot: !!real, ...this.sim.status(), cams: real?.cams || {} };
+    else s = { connected: false, sim: false, robot: false, state: 'offline', running: false, message: 'Arm offline', cams: {} };
     this.status = s;
     this.onStatus(s);
   }
 
-  async post(path, body) {
-    if (this.useSim) return this.sim.post(path, body);
+  async postReal(path, body) {
     const r = await fetch(this.base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) return `dashboard error ${r.status}`;
     const j = await r.json();
     return typeof j === 'string' ? j : j.result; // dashboard replies {"result": "started"}
+  }
+
+  async post(path, body) {
+    if (this.useSim) return this.sim.post(path, body);
+    return this.postReal(path, body);
   }
 
   run(mode) {
     return this.post('/api/policy', { ckpt: mode.ckpt || '', task: mode.task, secs: mode.secs });
   }
 
-  stop() {
-    return this.post('/api/key', { k: 'q' });
+  // Teleop = the dashboard's practice mode: the leader arm drives the real follower.
+  async teleop() {
+    if (this.forceSim) return this.sim.post('/api/practice', {});
+    if (!this.real) return 'robot dashboard unreachable';
+    const res = await this.postReal('/api/practice', {});
+    if (res === 'started') this.realUntil = Date.now() + 8000;
+    return res;
   }
 
+  // STOP reaches everything that might be moving: the simulator and the real arm.
+  async stop() {
+    const out = [];
+    if (this.sim.running) out.push(this.sim.post('/api/key', { k: 'q' }));
+    if (this.real?.running || !this.useSim) out.push(this.postReal('/api/key', { k: 'q' }).catch((e) => e.message));
+    const res = await Promise.all(out);
+    return res.includes('sent') ? 'sent' : res[0] || 'no session running';
+  }
+
+  // Cameras come from the dashboard even while actions are simulated.
   camUrl(name) {
-    return this.useSim ? null : `${this.base}/stream/${name}`;
+    return `${this.base}/stream/${name}`;
   }
 
   // Resolves once the arm is idle again (or after `ms`).
@@ -123,6 +157,15 @@ class Sim {
       this.at(2200, () => { this.state = 'robot'; this.message = 'Robot is running the policy by itself.'; });
       this.at(2200 + body.secs * 1000, () => { this.state = 'saving'; this.message = 'Policy run finished, returning arm to its start pose...'; });
       this.at(2200 + body.secs * 1000 + 3200, () => { this.state = 'idle'; this.running = false; this.message = 'Session ended.'; });
+      return 'started';
+    }
+    if (path === '/api/practice') {
+      if (this.running) return 'a session is already running';
+      this.clear();
+      this.running = true;
+      this.state = 'starting';
+      this.message = 'Connecting arms...';
+      this.at(1800, () => { this.state = 'practice'; this.message = 'Practice: move the leader arm, the follower copies it.'; });
       return 'started';
     }
     if (path === '/api/key' && body.k === 'q') {

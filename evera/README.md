@@ -4,6 +4,14 @@ evera is a JARVIS-style bench assistant. Tap a tool (or say "evera, pass me the 
 
 It's a plain web app with no build step. `robot/dashboard.py` serves it at **`/evera/`**.
 
+## Quickest: run it from a laptop (no changes on the GMKtec)
+
+```bash
+python3 evera/serve.py http://169.233.72.19:8080 8765
+```
+
+It serves the app and passes `/api/*` and `/stream/*` through to the robot dashboard, so the two camera feeds work even on the old dashboard. On the iPad (same Wi-Fi), open `http://<laptop IP>:8765/` and Add to Home Screen. Over plain http the iPad blocks the mic, so voice needs the HTTPS tunnel below (point it at port 8765). In `keys.local.js`, `link: 'sim'` keeps arm actions simulated while the cameras stay live. Set `'auto'` to drive the real arm.
+
 ## Deploy to the GMKtec (from a laptop in this repo)
 
 ```bash
@@ -50,7 +58,9 @@ It prints a URL like `https://something.trycloudflare.com`. On the iPad, open th
 ## Using it
 
 - **Tap a tool:** the arm (folded at rest) dissolves and a 3D model of that tool materializes in the center, spinning on the pedestal. Its mode chips appear at the top. Tap a chip (e.g. *Hand over*, *Heat-set insert*) to run it: the arm comes back to perform the action, then the tool model returns. Tap the empty stage to go back to the arm.
-- **Voice:** GPT picks the tool and mode and acts right away. "Stop", "halt" or "freeze" is caught on the iPad itself and stops instantly, without waiting for GPT.
+- **Voice / brain:** evera is a general conversational AI (default: Groq `openai/gpt-oss-120b`, set in `keys.local.js`). It chats, answers questions, and for project or how-to questions ("I want to build a PCB") runs a live **web search** first (~7 s). It runs arm actions right away.
+- **Teleop:** the **Teleop** button in the header (or say "start teleop") starts the dashboard's practice mode: move the leader arm and the follower copies it. **End teleop** or STOP ends it.
+- **Got it / drop it:** during a hand-over, say it (or tap **Got it · release**) and the gripper opens and the arm returns to start. "Stop", "halt" or "freeze" is caught on the iPad itself and stops instantly, without waiting for GPT.
 - **STOP** (header, plus the big red button while running), or **Esc** on a keyboard: sends `POST /api/key {k:"q"}`. The arm returns to its start pose.
 - **Drag the 3D arm** to orbit it. Double-tap to reset the view. Tap a camera feed to enlarge it.
 - **Without keys** it still works: the offline brain matches keywords and the voice falls back to the browser's.
@@ -95,5 +105,6 @@ Then open http://localhost:8765/?sim=1. Debug hashes for testing:
 | `brain.js` | OpenAI tool calling plus the offline keyword fallback |
 | `voice.js` | Hold-to-talk (MediaRecorder → OpenAI transcription), wake word, ElevenLabs speech, waveform |
 | `actions.js` | Tool and mode config (edit this one) |
+| `serve.py` | Laptop server: the app plus a pass-through to the dashboard's API and camera streams |
 | `assets/so101/` | URDF + STL meshes from [TheRobotStudio/SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100) (Apache-2.0) |
 | `vendor/three/` | three.js r160 (MIT), so it runs without a CDN |
