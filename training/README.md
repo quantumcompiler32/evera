@@ -37,6 +37,19 @@ python training/rl_finetune.py outputs/trial_act/checkpoints/last/pretrained_mod
 ```
 Compare checkpoints offline with `eval_policy.py <ckpt> <root> --train <eps> --heldout 60,70,80`.
 
+Results (Oct 10; fine-tuned 4000 steps from `trial_act`, which saw eps 15-29; held out eps 60, 70, 80; lower is better):
+
+| Model | Reach error from rest, held out (deg) | 1 s-ahead error along held-out eps (deg) | Pan correlation, all eps |
+|---|---|---|---|
+| `trial_act` (eps 15-29) | 13.3 | 9.4 | 0.11 |
+| AWR, beta 0.2 (`Neevdharod/act_so101_pick_place_awr`) | 8.9 | 6.8 | 0.53 |
+| Plain fine-tune, eps 50-80 (`Neevdharod/act_so101_pick_place_ep50_80`) | **5.7** | **6.8** | **0.80** |
+
+Training on the newer, cleaner episodes is what helped (about 30% lower error). Reward weighting did not beat
+the plain fine-tune: it matched it along trajectories and on typical start spots (eps 70, 80), but focusing on
+~14 effective demos cost coverage of the unusual one (ep 60). Use the plain fine-tune on the arm. These are offline
+numbers; success rate on the real arm is still untested.
+
 ## Platform quirks handled by `cloud_setup.sh`
 - `/tmp` is a 4 GB tmpfs, so pip temp files go to `/workspace/tmp`.
 - Egress goes through a slow proxy: pip uses `--timeout 300`. github.com is blocked, so nothing is installed from git.
