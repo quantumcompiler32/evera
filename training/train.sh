@@ -2,9 +2,9 @@
 # ACT training on AMD Radeon Cloud. Run `bash training/cloud_setup.sh` once per instance first.
 #
 #   bash training/train.sh smoke                        # 200 steps on a public SO-101 dataset: proves the pipeline
-#   bash training/train.sh real so101_pick_place        # full run on our dataset (name under your HF user)
-#   bash training/train.sh real so101_pick_place 20000  # custom step count
-#   bash training/train.sh resume act_so101_pick_place  # continue after the instance restarts
+#   bash training/train.sh real so101_screwdriver_bin        # full run on our dataset (name under your HF user)
+#   bash training/train.sh real so101_screwdriver_bin 20000  # custom step count
+#   bash training/train.sh resume act_so101_screwdriver_bin  # continue after the instance restarts
 #   tail -f /workspace/train.log                        # watch progress (training survives closing the browser)
 #
 # Measured on this cloud's GPU (gfx1100), 640x480 x 2 cameras: ~3.3 s/step at batch 64 (~19 samples/s).
@@ -33,7 +33,7 @@ case "$MODE" in
       --wandb.enable="$WANDB" > "$LOG" 2>&1 &
     ;;
   real)
-    DATASET="${2:?dataset name, e.g. so101_pick_place}"
+    DATASET="${2:?dataset name, e.g. so101_screwdriver_bin}"
     STEPS="${3:-15000}"
     JOB="act_${DATASET}"
     HF_USER="$(hf_user)"
@@ -47,7 +47,7 @@ case "$MODE" in
       --wandb.enable="$WANDB" > "$LOG" 2>&1 &
     ;;
   resume)
-    JOB="${2:?job name, e.g. act_so101_pick_place}"
+    JOB="${2:?job name, e.g. act_so101_screwdriver_bin}"
     nohup lerobot-train \
       --config_path="outputs/train/${JOB}/checkpoints/last/pretrained_model/train_config.json" \
       --resume=true >> "$LOG" 2>&1 &

@@ -12,6 +12,7 @@ import json
 import os
 import pty
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -25,8 +26,11 @@ import zmq
 
 HOME = Path.home()
 RECORD = HOME / "hackathon/robot/record.sh"
-DATA_ROOT = HOME / "hackathon/data/so101_pick_place"
-BAD_FILE = HOME / "hackathon/data/so101_pick_place.bad"
+DATASET = os.environ.get("DATASET", "so101_screwdriver_bin")  # must match record.sh, which gets it via env
+DATA_ROOT = HOME / f"hackathon/data/{DATASET}"
+BAD_FILE = HOME / f"hackathon/data/{DATASET}.bad"
+DEFAULT_TASK = "pick up the screwdriver and place it in the bin"
+DEFAULT_EP_TIME = 25
 TARGET = 50
 CAMS = {"top": 5555, "wrist": 5556}
 PREVIEW_FPS = 8  # keep Wi-Fi load low; recording itself is unaffected
@@ -34,6 +38,7 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 # ---------------------------------------------------------------- cameras
 latest_jpeg = {name: None for name in CAMS}
+last_frame_t = {name: 0.0 for name in CAMS}
 
 
 def camera_reader(name, port):
@@ -50,6 +55,7 @@ def camera_reader(name, port):
             ok, jpg = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 55])
             if ok:
                 latest_jpeg[name] = jpg.tobytes()
+                last_frame_t[name] = time.time()
         except Exception:
             time.sleep(0.2)
 
@@ -63,12 +69,17 @@ S = {
     "state": "idle",  # idle | starting | recording | reset | saving | error
     "episode": None,
     "t_state": time.time(),
-    "ep_time": 30,
+    "ep_time": DEFAULT_EP_TIME,
     "running": False,
     "log": deque(maxlen=200),
     "message": "",
     "busy": "",  # name of a one-shot job (upload/check) while it runs
+    "mode": "record",  # record | policy
+    "auto_next": 5,  # seconds of reset before the next episode starts by itself (0 = wait for NEXT)
+    "paused": False,
+    "reset_gen": 0,
 }
+DEFAULT_CKPT = str(HOME / "hackathon/outputs/trial_act/checkpoints/last/pretrained_model")
 proc = None
 master_fd = None
 
@@ -77,10 +88,28 @@ def set_state(state, message=None):
     S["state"], S["t_state"] = state, time.time()
     if message is not None:
         S["message"] = message
+    if state == "reset" and S["mode"] == "record":
+        S["reset_gen"] += 1
+        gen = S["reset_gen"]
+        threading.Thread(target=auto_next, args=(gen,), daemon=True).start()
+
+
+def auto_next(gen):
+    """After auto_next seconds of reset, start the next episode unless paused or already moved on."""
+    while True:
+        time.sleep(0.2)
+        with lock:
+            if S["reset_gen"] != gen or S["state"] != "reset" or not S["running"]:
+                return
+            wait = S["auto_next"]
+            if wait and not S["paused"] and time.time() - S["t_state"] >= wait:
+                send_key("n")
+                return
 
 
 def parse_line(line):
-    S["log"].append(line)
+    if not line.startswith(("{", " ", "'", "Svt[", "Map:")):
+        S["log"].append(line)
     m = re.search(r"Recording episode (\d+)", line)
     if m:
         S["episode"] = int(m.group(1))
@@ -91,6 +120,10 @@ def parse_line(line):
         S["message"] = "Episode discarded, it will be recorded again"
     elif "Stop recording" in line:
         set_state("saving", "Stopping and saving...")
+    elif "starting rollout" in line:
+        set_state("robot", "Robot is running the policy by itself. STOP halts it.")
+    elif "Duration limit reached" in line or "Rollout finished" in line:
+        set_state("saving", "Policy run finished, returning arm to its start pose...")
     elif "PREFLIGHT FAIL" in line:
         set_state("error", line.strip())
     elif "preflight: all 12 motors OK" in line:
@@ -123,18 +156,30 @@ def reader():
             set_state("idle", f"Session ended (exit code {proc.returncode}). Good episodes: {counts()['good']}")
 
 
-def start_session(n, ep_time, task):
+def start_policy(ckpt, secs, task):
+    return start_session(0, secs, task, args=["policy", ckpt, str(secs)], mode="policy")
+
+
+def cam_ages():
+    return {n: round(time.time() - t, 1) if t else None for n, t in last_frame_t.items()}
+
+
+def start_session(n, ep_time, task, args=None, mode="record"):
     global proc, master_fd
     if S["running"]:
         return "a session is already running"
+    dead = [n for n, a in cam_ages().items() if a is None or a > 3]
+    if dead:
+        set_state("error", f"Camera not sending frames: {', '.join(dead)}. Check its USB cable, then try again.")
+        return "camera down"
     master_fd, slave_fd = pty.openpty()
-    env = dict(os.environ, EP_TIME=str(ep_time), TASK=task, PYTHONUNBUFFERED="1")
+    env = dict(os.environ, EP_TIME=str(ep_time), TASK=task, DATASET=DATASET, PYTHONUNBUFFERED="1")
     for k in ("DISPLAY", "WAYLAND_DISPLAY"):  # force LeRobot's terminal (TTY) key listener
         env.pop(k, None)
-    proc = subprocess.Popen(["bash", str(RECORD), "session", str(n)], stdin=slave_fd, stdout=slave_fd,
+    proc = subprocess.Popen(["bash", str(RECORD), *(args or ["session", str(n)])], stdin=slave_fd, stdout=slave_fd,
                             stderr=slave_fd, env=env, start_new_session=True, close_fds=True)
     os.close(slave_fd)
-    S.update(running=True, ep_time=ep_time, episode=None)
+    S.update(running=True, ep_time=ep_time, episode=None, mode=mode)
     S["log"].clear()
     set_state("starting", "Checking motors, connecting arms + cameras (about 10 s)...")
     threading.Thread(target=reader, daemon=True).start()
@@ -144,6 +189,11 @@ def start_session(n, ep_time, task):
 def send_key(k):
     if not S["running"] or master_fd is None:
         return "no session running"
+    if S["mode"] == "policy":
+        if k == "q":  # lerobot-rollout stops on SIGINT and returns the arm to its start pose
+            os.killpg(proc.pid, signal.SIGINT)
+            set_state("saving", "Stopping the policy, arm returning to its start pose...")
+        return "sent"
     os.write(master_fd, k.encode())
     # Update the banner immediately instead of waiting for LeRobot's log line.
     if k == "n" and S["state"] == "recording":
@@ -206,7 +256,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport
 .wrap{max-width:1200px;margin:0 auto;padding:16px}
 #banner{border-radius:10px;padding:14px 18px;font-size:22px;font-weight:700;display:flex;justify-content:space-between;align-items:center;background:#2a2f3a}
 #banner.recording{background:var(--red)}#banner.reset{background:var(--blue)}#banner.starting,#banner.saving{background:var(--yellow);color:#111}
-#banner.error{background:#7a1d20}#timer{font-variant-numeric:tabular-nums;font-size:30px}
+#banner.error{background:#7a1d20}#banner.robot{background:#8e4ec6}#timer{font-variant-numeric:tabular-nums;font-size:30px}
 #msg{color:var(--mut);margin:8px 2px 12px;min-height:20px}
 .cams{display:grid;grid-template-columns:1fr 1fr;gap:12px}.cam{background:var(--panel);border-radius:10px;padding:8px}
 .cam img{width:100%;aspect-ratio:4/3;object-fit:contain;background:#000;border-radius:6px;display:block}.cam div{color:var(--mut);font-size:13px;margin-top:4px}
@@ -222,23 +272,37 @@ kbd{background:#2f3542;border-radius:4px;padding:1px 6px;font-size:12px}
 @media(max-width:700px){.cams{grid-template-columns:1fr}}
 </style></head><body><div class="wrap">
 <div id="banner" class="idle"><span id="state">IDLE</span><span id="timer"></span></div>
+<div id="camwarn" style="display:none;background:#e5484d;color:#fff;border-radius:10px;padding:10px 14px;margin:8px 0;font-weight:700"></div>
 <div id="msg"></div>
 <div class="cams"><div class="cam"><img id="imgtop" src="/stream/top"><div>Top (Limelight): scene</div></div>
 <div class="cam"><img id="imgwrist" src="/stream/wrist"><div>Wrist camera</div></div></div>
 <div class="row"><button id="done" onclick="key('n')">✓ DONE / NEXT <kbd>Space</kbd></button>
-<button id="redo" onclick="key('r')">↺ REDO <kbd>R</kbd></button><button id="stop" onclick="key('q')">■ STOP <kbd>Q</kbd></button></div>
+<button id="redo" onclick="key('r')">↺ REDO <kbd>R</kbd></button><button id="stop" onclick="key('q')">■ STOP <kbd>Q</kbd></button>
+<button id="pause" onclick="post('/api/settings',{paused:!st.paused})">⏸ PAUSE AUTO <kbd>P</kbd></button></div>
 <div class="stats"><div><div class="big" id="good">0</div><label>good / 50</label></div><div class="bar"><i id="prog" style="width:0"></i></div>
 <div><div id="bad">bad: none</div><label>total saved: <span id="total">0</span></label></div></div>
 <div class="row" style="align-items:end">
 <div><label>episodes this session</label><br><input id="n" type="number" value="50" style="width:90px"></div>
-<div><label>max seconds per episode</label><br><input id="ept" type="number" value="30" style="width:90px"></div>
-<div style="flex:1"><label>task text</label><br><input id="task" value="pick up the lego brick and place it in the bin" style="width:100%"></div>
+<div><label>max seconds per episode</label><br><input id="ept" type="number" value="__EPT__" style="width:90px"></div>
+<div style="flex:1"><label>task text</label><br><input id="task" value="__TASK__" style="width:100%"></div>
+<div><label>auto-next after (s, 0=off)</label><br><input id="autonext" type="number" value="5" style="width:90px" onchange="post('/api/settings',{auto_next:+this.value})"></div>
 <button id="start" onclick="start()">▶ START SESSION</button></div>
+<div class="row" style="align-items:end;background:#181b22;border-radius:10px;padding:10px">
+<div style="flex:1"><label>trained model (checkpoint folder on the GMKtec)</label><br><input id="ckpt" value="__CKPT__" style="width:100%"></div>
+<div><label>seconds</label><br><input id="psecs" type="number" value="30" style="width:80px"></div>
+<button id="runpolicy" style="background:#8e4ec6" onclick="post('/api/policy',{ckpt:ckpt.value,secs:+psecs.value,task:task.value})">🤖 RUN POLICY</button></div>
 <div class="row"><button class="small" id="markbad" onclick="post('/api/bad')">✗ Mark last saved episode bad</button>
 <button class="small" id="check" onclick="post('/api/check')">Check motors</button>
 <button class="small" id="upload" onclick="post('/api/upload')">⬆ Upload to Hugging Face</button>
 <button class="small" id="camtoggle" onclick="toggleCams()">Cameras: ON</button></div>
 <pre id="log"></pre>
+<details open style="background:#181b22;border-radius:10px;padding:10px 14px;margin:8px 0"><summary><b>Before every episode (data quality)</b></summary><ul style="margin:6px 0">
+<li>Screwdriver on the <b>next taped start spot</b> (rotate through them, ~10 demos each), handle pointing the same way every time.</li>
+<li>Drop it in the <b>taped-down bin</b>, the same bin in the same place every episode.</li>
+<li>Arm starts and ends at the <b>same rest pose</b>. <b>Open the gripper fully</b> before you release, and press DONE right after the arm is back at rest.</li>
+<li>One smooth motion: reach, open <b>wide</b>, grab, lift, drop, return. No re-grabs or pauses. Fumbled it? Press REDO.</li>
+<li>Nothing else on the table, no hands or people in either camera, the same lights on. Don't move the cameras.</li>
+</ul></details>
 <label>Flow: START → episode records (red) → do the task → DONE → reset (blue): put object back, arm to rest → NEXT → … Messed up? REDO discards the episode. Keys: <kbd>Space</kbd> done/next, <kbd>R</kbd> redo, <kbd>Q</kbd> stop.</label>
 </div><script>
 let st={},camsOn=true;
@@ -248,19 +312,28 @@ async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-
 function key(k){post('/api/key',{k})}
 function start(){post('/api/start',{n:+n.value,ep_time:+ept.value,task:task.value})}
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;
- if(e.code==='Space'){e.preventDefault();key('n')}else if(e.key==='r'||e.key==='R')key('r');else if(e.key==='q'||e.key==='Q')key('q')});
+ if(e.code==='Space'){e.preventDefault();key('n')}else if(e.key==='r'||e.key==='R')key('r');else if(e.key==='q'||e.key==='Q')key('q');else if(e.key==='p'||e.key==='P')post('/api/settings',{paused:!st.paused})});
+let actx,prevState='';function beep(f,ms,n=1){try{actx=actx||new AudioContext();for(let i=0;i<n;i++){const o=actx.createOscillator(),g=actx.createGain();
+ o.frequency.value=f;o.connect(g);g.connect(actx.destination);const t=actx.currentTime+i*(ms+80)/1000;g.gain.setValueAtTime(.25,t);o.start(t);o.stop(t+ms/1000)}}catch(e){}}
+document.addEventListener('click',()=>{actx=actx||new AudioContext()},{once:true});
 async function tick(){try{st=await (await fetch('/api/status')).json()}catch(e){setTimeout(tick,1000);return}
  const b=document.getElementById('banner');b.className=st.state;
- const names={idle:'IDLE',starting:'CONNECTING…',recording:'● RECORDING ep '+st.episode,reset:'RESET: get ready',saving:'SAVING…',error:'PROBLEM'};
+ const names={robot:'🤖 ROBOT DRIVING ITSELF',idle:'IDLE',starting:'CONNECTING…',recording:'● RECORDING ep '+st.episode,reset:'RESET: get ready',saving:'SAVING…',error:'PROBLEM'};
  document.getElementById('state').textContent=names[st.state]||st.state;
  const el=(Date.now()/1000-st.t_state);document.getElementById('timer').textContent=
-  st.state==='recording'?Math.max(0,Math.ceil(st.ep_time-el))+'s':st.state==='reset'?Math.floor(el)+'s':'';
+  (st.state==='recording'||st.state==='robot')?Math.max(0,Math.ceil(st.ep_time-el))+'s':
+  st.state==='reset'?(st.auto_next&&!st.paused?'next in '+Math.max(0,Math.ceil(st.auto_next-el))+'s':(st.paused?'PAUSED ':'')+Math.floor(el)+'s'):'';
+ if(st.state!==prevState){if(st.state==='recording')beep(880,180);else if(st.state==='reset')beep(440,250);else if(st.state==='error')beep(220,200,3);prevState=st.state}
+ document.getElementById('pause').textContent=st.paused?'▶ RESUME AUTO (P)':'⏸ PAUSE AUTO (P)';document.getElementById('pause').disabled=!st.running||st.mode==='policy';
  document.getElementById('msg').textContent=st.busy?st.busy+'…':st.message;
+ const dead=Object.entries(st.cams||{}).filter(([k,a])=>a===null||a>3).map(([k])=>k);const cw=document.getElementById('camwarn');
+ cw.style.display=dead.length?'block':'none';cw.textContent=dead.length?'⚠ CAMERA DOWN: '+dead.join(', ')+'. Check its USB cable. Episodes recorded now will be bad (press R / Q).':'';
  good.textContent=st.counts.good;total.textContent=st.counts.total;prog.style.width=Math.min(100,st.counts.good/50*100)+'%';
  bad.textContent='bad: '+(st.counts.bad.length?st.counts.bad.join(', '):'none');
- const live=st.running;for(const id of ['done','redo','stop'])document.getElementById(id).disabled=!live;
+ const live=st.running,pol=st.mode==='policy';for(const id of ['done','redo'])document.getElementById(id).disabled=!live||pol;
+ document.getElementById('stop').disabled=!live;
  document.getElementById('done').textContent=st.state==='reset'?'▶ NEXT EPISODE  (Space)':'✓ DONE  (Space)';
- for(const id of ['start','upload','check'])document.getElementById(id).disabled=live||!!st.busy;
+ for(const id of ['start','upload','check','runpolicy'])document.getElementById(id).disabled=live||!!st.busy;
  const lg=document.getElementById('log');const atBottom=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-5;
  lg.textContent=st.log.join('\n');if(atBottom)lg.scrollTop=lg.scrollHeight;setTimeout(tick,250)}
 tick();
@@ -281,7 +354,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/":
-            body = PAGE.encode()
+            body = (PAGE.replace("__CKPT__", DEFAULT_CKPT).replace("__TASK__", DEFAULT_TASK)
+                    .replace("__EPT__", str(DEFAULT_EP_TIME)).encode())
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -309,6 +383,7 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 out = {k: (list(v)[-40:] if k == "log" else v) for k, v in S.items()}
             out["counts"] = counts()
+            out["cams"] = cam_ages()
             self._json(out)
         else:
             self.send_error(404)
@@ -318,8 +393,19 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(n) or b"{}")
         if self.path == "/api/start":
             with lock:
-                r = start_session(max(1, int(body.get("n", TARGET))), max(5, int(body.get("ep_time", 30))),
-                                  body.get("task") or "pick up the lego brick and place it in the bin")
+                r = start_session(max(1, int(body.get("n", TARGET))), max(5, int(body.get("ep_time", DEFAULT_EP_TIME))),
+                                  body.get("task") or DEFAULT_TASK)
+        elif self.path == "/api/policy":
+            with lock:
+                r = start_policy(body.get("ckpt") or DEFAULT_CKPT, max(5, int(body.get("secs", 30))),
+                                 body.get("task") or DEFAULT_TASK)
+        elif self.path == "/api/settings":
+            with lock:
+                if "auto_next" in body:
+                    S["auto_next"] = max(0, int(body["auto_next"]))
+                if "paused" in body:
+                    S["paused"] = bool(body["paused"])
+                r = {"auto_next": S["auto_next"], "paused": S["paused"]}
         elif self.path == "/api/key":
             r = send_key(body.get("k", "")[:1]) if body.get("k") in ("n", "r", "q") else "bad key"
         elif self.path == "/api/bad":

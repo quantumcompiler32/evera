@@ -26,6 +26,17 @@ policy on a Radeon Cloud notebook instance (radeon-global.anruicloud.com, 1 GPU 
 6. If the instance stops: relaunch, redo 2–3, then `bash /workspace/training/train.sh resume act_so101_pick_place`
    (only if `/workspace/outputs` survived; otherwise restart from the last checkpoint on the Hub).
 
+## Offline RL fine-tune (runs on the GMKtec GPU)
+`rl_finetune.py` fine-tunes an existing ACT checkpoint on a range of episodes with reward-weighted regression (AWR):
+each demo gets a reward from its joint log (failures dropped; points off for an off-target drop, not returning to
+rest, a slow reach, stalls, jerky motion) and frames are sampled in proportion to `exp(advantage / beta)`.
+`--uniform` trains the same episodes unweighted, as the control. `--dry-run` prints the reward table only.
+```bash
+python training/rl_finetune.py outputs/trial_act/checkpoints/last/pretrained_model ~/rl_work/snap \
+  --episodes 50-80 --heldout 60,70,80 --beta 0.2 --out outputs/rl_act
+```
+Compare checkpoints offline with `eval_policy.py <ckpt> <root> --train <eps> --heldout 60,70,80`.
+
 ## Platform quirks handled by `cloud_setup.sh`
 - `/tmp` is a 4 GB tmpfs, so pip temp files go to `/workspace/tmp`.
 - Egress goes through a slow proxy: pip uses `--timeout 300`. github.com is blocked, so nothing is installed from git.

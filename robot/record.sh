@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # Record teleop demos on the GMKtec (Ubuntu, LeRobot 0.6.2). Run inside your SSH window:
 #   bash ~/hackathon/robot/record.sh test        # 2 episodes  -> Neevdharod/test_run
-#   bash ~/hackathon/robot/record.sh full        # 50 episodes -> Neevdharod/so101_pick_place
+#   bash ~/hackathon/robot/record.sh full        # 50 episodes -> Neevdharod/$DATASET
 #   bash ~/hackathon/robot/record.sh more 10     # add 10 more episodes to the full dataset
 #   bash ~/hackathon/robot/record.sh practice    # just teleoperate, nothing recorded (Ctrl-C to stop)
 #
 # One episode per command (recommended):
-#   bash ~/hackathon/robot/record.sh one         # record ONE episode, added to Neevdharod/so101_pick_place
-#   bash ~/hackathon/robot/record.sh bad         # mark the episode you just recorded as bad (dropped at upload)
+#   bash ~/hackathon/robot/record.sh one         # record ONE episode, added to Neevdharod/$DATASET
+#   bash ~/hackathon/robot/record.sh bad         # mark the episode you just recorded as bad (kept, but split off at upload)
 #   bash ~/hackathon/robot/record.sh status      # how many episodes so far, which are marked bad
-#   bash ~/hackathon/robot/record.sh upload      # drop bad episodes, upload the rest to Hugging Face
-# Each episode: EP_TIME s to do the task, then RESET_TIME s to put the brick back. Never Ctrl-C mid-episode.
+#   bash ~/hackathon/robot/record.sh upload      # good -> $DATASET, bad -> ${DATASET}_rejects on Hugging Face
+#   bash ~/hackathon/robot/record.sh review [N]  # quality report + contact sheets for episodes N.. (safe while recording)
+# Each episode: EP_TIME s to do the task, then RESET_TIME s to put the object back. Never Ctrl-C mid-episode.
+# DATASET defaults to so101_screwdriver_bin (fixed bin + taped start spots). The older so101_pick_place
+# episodes dropped the screwdriver in a different place every time, so they stay out of it.
 set -euo pipefail
 source ~/miniforge3/etc/profile.d/conda.sh
 conda activate lerobot
@@ -19,9 +22,10 @@ conda activate lerobot
 # Follower (gripper arm) = ...5836, leader (handle arm) = ...8274 (identified Oct 10 from motor calibration).
 FOLLOWER_PORT="${FOLLOWER_PORT:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4C125836-if00}"
 LEADER_PORT="${LEADER_PORT:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4C128274-if00}"
-EP_TIME="${EP_TIME:-30}"
+EP_TIME="${EP_TIME:-25}"  # a cap: press DONE as soon as the arm is back at rest
 RESET_TIME="${RESET_TIME:-10}"
-TASK="${TASK:-pick up the lego brick and place it in the bin}"
+TASK="${TASK:-pick up the screwdriver and place it in the bin}"
+DATASET="${DATASET:-so101_screwdriver_bin}"
 CAMS="{scene: {type: zmq, server_address: 127.0.0.1, port: 5555, camera_name: top, width: 320, height: 240, fps: 30, warmup_s: 3}, wrist: {type: zmq, server_address: 127.0.0.1, port: 5556, camera_name: wrist, width: 320, height: 240, fps: 30, warmup_s: 3}}"
 
 # Camera bridges must be running (they serve the Limelight + wrist cam at 320x240)
@@ -34,8 +38,8 @@ for n in top wrist; do
   fi
 done
 
-MAIN=Neevdharod/so101_pick_place
-MAIN_ROOT=~/hackathon/data/so101_pick_place
+MAIN=Neevdharod/$DATASET
+MAIN_ROOT=~/hackathon/data/$DATASET
 BAD_FILE=$MAIN_ROOT.bad
 count_eps() { python -c "import json,sys; print(json.load(open(sys.argv[1]+'/meta/info.json'))['total_episodes'])" "$MAIN_ROOT" 2>/dev/null || echo 0; }
 
@@ -48,7 +52,7 @@ case "${1:-}" in
     [ "$N" -gt 0 ] || { echo "nothing recorded yet"; exit 1; }
     LAST=$((N - 1))
     grep -qx "$LAST" "$BAD_FILE" 2>/dev/null || echo "$LAST" >> "$BAD_FILE"
-    echo "episode $LAST marked bad (will be dropped at upload). Bad so far: $(tr '\n' ' ' < "$BAD_FILE")"
+    echo "episode $LAST marked bad (will go to ${DATASET}_rejects at upload). Bad so far: $(tr '\n' ' ' < "$BAD_FILE")"
     exit 0 ;;
   upload)
     python - "$MAIN" "$MAIN_ROOT" "$BAD_FILE" <<'PY'
@@ -57,16 +61,32 @@ from pathlib import Path
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.dataset_tools import delete_episodes
 repo, root, bad_file = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
-ds = LeRobotDataset(repo, root=root)
-bad = sorted({int(x) for x in bad_file.read_text().split()}) if bad_file.exists() else []
+full = LeRobotDataset(repo, root=root)
+bad = sorted({int(x) for x in bad_file.read_text().split()} & set(range(full.num_episodes))) if bad_file.exists() else []
+ds = full
 if bad:
-    clean_root = root.with_name(root.name + "_clean")
+    # Bad episodes are kept, not thrown away: they go to a separate <repo>_rejects dataset, and the
+    # raw local folder ($MAIN_ROOT) still has everything. Only the good split is trained on.
+    good = [e for e in range(full.num_episodes) if e not in bad]
+    clean_root, rej_root = (root.with_name(root.name + s) for s in ("_clean", "_rejects"))
     shutil.rmtree(clean_root, ignore_errors=True)
-    print(f"dropping bad episodes {bad} ...")
-    ds = delete_episodes(ds, bad, output_dir=clean_root, repo_id=repo)
+    shutil.rmtree(rej_root, ignore_errors=True)
+    print(f"splitting off bad episodes {bad} ...")
+    ds = delete_episodes(full, bad, output_dir=clean_root, repo_id=repo)
+    if good:
+        rej = delete_episodes(full, good, output_dir=rej_root, repo_id=repo + "_rejects")
+        rej.push_to_hub(private=True)
+        print(f"UPLOADED: {repo}_rejects ({rej.num_episodes} bad episodes: original numbers {bad})")
 ds.push_to_hub(private=True)
 print(f"UPLOADED: {repo} ({ds.num_episodes} good episodes, {ds.num_frames} frames)")
 PY
+    exit 0 ;;
+  review)  # snapshot the dataset (recording can keep going) and run the quality report on it
+    [ "$(count_eps)" -gt 0 ] || { echo "nothing recorded yet"; exit 1; }
+    SNAP=${MAIN_ROOT}_snap; OUT=~/hackathon/review
+    rm -rf "$SNAP" "$OUT"; cp -r "$MAIN_ROOT" "$SNAP"
+    cd ~/hackathon && REPO=$MAIN nice -n 19 python robot/review_episodes.py "$SNAP" "${2:-0}" "$OUT" 2>&1 | grep -v Warning
+    echo "flagged episodes worth dropping: record.sh bad marks only the LAST one; for others: echo <ep> >> $BAD_FILE"
     exit 0 ;;
   practice)
     echo "Practice mode: move the leader arm, the follower copies it. Nothing is recorded. Ctrl-C to stop."
@@ -74,6 +94,8 @@ PY
       --robot.type=so101_follower --robot.port="$FOLLOWER_PORT" --robot.id=my_follower \
       --teleop.type=so101_leader --teleop.port="$LEADER_PORT" --teleop.id=my_leader ;;
   check) REPO=$MAIN; N=0; RESUME=false; CHECK_ONLY=1 ;;
+  policy)  # run a trained policy on the follower (no leader needed): record.sh policy <ckpt_dir> [seconds]
+        REPO=$MAIN; N=0; RESUME=false; POLICY_CKPT="${2:?checkpoint dir (.../pretrained_model)}"; POLICY_SECS="${3:-30}" ;;
   session)  # driven by the dashboard: N episodes in one connection, keys n/r/q control it
         REPO=$MAIN; N="${2:-50}"; RESET_TIME="${RESET_TIME:-300}"
         if [ "$(count_eps)" -gt 0 ]; then RESUME=true; else RESUME=false; rm -rf "$MAIN_ROOT" "$BAD_FILE"; fi
@@ -86,8 +108,8 @@ PY
   full) REPO=$MAIN; N=50; RESUME=false
         [ "$(count_eps)" -gt 0 ] && { echo "$MAIN already has $(count_eps) episodes. Use 'one' or 'more N' to add, or delete $MAIN_ROOT to start over."; exit 1; }
         rm -rf "$MAIN_ROOT" ;;
-  more) REPO=Neevdharod/so101_pick_place; N="${2:?how many more episodes}"; RESUME=true ;;
-  *) sed -n '2,14p' "$0"; exit 1 ;;
+  more) REPO=$MAIN; N="${2:?how many more episodes}"; RESUME=true ;;
+  *) sed -n '2,16p' "$0"; exit 1 ;;
 esac
 ROOT=~/hackathon/data/${REPO#*/}
 SKIP_PUSH=${SKIP_PUSH:-0}
@@ -120,6 +142,18 @@ if ok_all:
 sys.exit(0 if ok_all else 1)
 PY
 [ "${CHECK_ONLY:-0}" = 1 ] && exit 0
+
+if [ -n "${POLICY_CKPT:-}" ]; then
+  echo "Running policy $POLICY_CKPT for ${POLICY_SECS}s (max 8 deg per joint per step). Keep a hand near the follower's power plug."
+  set +e
+  lerobot-rollout --strategy.type=base \
+    --policy.path="$POLICY_CKPT" --device=cuda \
+    --robot.type=so101_follower --robot.port="$FOLLOWER_PORT" --robot.id=my_follower \
+    --robot.cameras="$CAMS" --robot.max_relative_target=8 \
+    --task="$TASK" --duration="$POLICY_SECS" --play_sounds=false
+  set -e
+  exit 0
+fi
 
 echo "Recording $N episode(s) -> $REPO  (${EP_TIME}s task, ${RESET_TIME}s reset)"
 echo "Watch for 'Recording episode N' and 'Reset the environment' below."

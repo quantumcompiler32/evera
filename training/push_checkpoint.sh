@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Upload an intermediate checkpoint so the arm team can test it while training continues.
-#   bash push_checkpoint.sh act_so101_pick_place 010000
+#   bash push_checkpoint.sh act_so101_screwdriver_bin 010000
 set -euo pipefail
 cd /workspace && . /opt/venv/bin/activate
 JOB="${1:?job name}"

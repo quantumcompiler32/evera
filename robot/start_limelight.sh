@@ -6,15 +6,17 @@
 source ~/miniforge3/etc/profile.d/conda.sh
 conda activate lerobot
 cd ~/hackathon
-start() {  # name port source
+start() {  # name port source [extra bridge args]
   local pidf=~/cam_$1.pid
   # pid file holds the process-group leader (the restart loop); kill the whole group
   if [ -f "$pidf" ]; then kill -- -"$(cat "$pidf")" 2>/dev/null || kill "$(cat "$pidf")" 2>/dev/null; sleep 1; fi
   # restart loop: the bridge exits on its own if its camera stalls, and comes straight back
-  setsid nohup bash -c "while true; do python robot/limelight_zmq.py --name '$1' --port '$2' --url '$3'; echo 'bridge exited, restarting'; sleep 1; done" > ~/cam_$1.log 2>&1 < /dev/null &
+  setsid nohup bash -c "while true; do python robot/limelight_zmq.py --name '$1' --port '$2' --url '$3' ${4:-}; echo 'bridge exited, restarting'; sleep 1; done" > ~/cam_$1.log 2>&1 < /dev/null &
   echo $! > "$pidf"
   echo "$1 bridge started (pid $!, port $2, source $3)"
 }
 [ -f ~/limelight_zmq.pid ] && kill "$(cat ~/limelight_zmq.pid)" 2>/dev/null && rm ~/limelight_zmq.pid  # old single bridge
 start top 5555 http://172.29.0.1:5800
-start wrist 5556 "${WRIST_CAM:-/dev/v4l/by-id/usb-icSpring_icspring_camera_202404160005-video-index0}"
+# wrist exposure + white balance are locked (see limelight_zmq.py); pin values with WRIST_EXPOSURE / WRIST_WB
+start wrist 5556 "${WRIST_CAM:-/dev/v4l/by-id/usb-icSpring_icspring_camera_202404160005-video-index0}" \
+  "${WRIST_EXPOSURE:+--exposure $WRIST_EXPOSURE} ${WRIST_WB:+--wb $WRIST_WB}"

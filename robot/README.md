@@ -11,6 +11,9 @@ LeRobot 0.6.2 in the `lerobot` conda env). The scripts expect this folder at `~/
 | `start_limelight.sh` | Starts both bridges under restart loops: `top` (Limelight, port 5555) and `wrist` (USB cam, port 5556). |
 | `check_arms.py` | Live per-servo check of both arms (read-only), for debugging power and cables. |
 | `test_camera.py` | Reads frames through LeRobot's camera classes and saves a snapshot. |
+| `review_episodes.py` | Quality report per episode (grasp, release, drop spot, rest pose, stalls) plus contact sheets. `record.sh review [N]`. |
+| `v4l2_ctl.py` | List/set USB camera V4L2 controls (no `v4l2-ctl` on the GMKtec); used to lock wrist exposure/WB. |
+| `limelight_ws.py` | Read/change Limelight 3A pipeline settings over its web UI WebSocket (crosshair off, stream rate). |
 
 ## Typical use
 ```bash

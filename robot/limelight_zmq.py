@@ -12,6 +12,7 @@ Then in lerobot-record:
 """
 import argparse
 import base64
+import fcntl
 import json
 import os
 import threading
@@ -26,11 +27,36 @@ p.add_argument("--port", type=int, default=5555)
 p.add_argument("--name", default="top")
 p.add_argument("--width", type=int, default=320)
 p.add_argument("--height", type=int, default=240)
+# USB cameras only: V4L2 controls applied on every (re)open, e.g. --ctrl auto_exposure=1 --ctrl exposure_time_absolute=166.
+# Auto exposure / white balance drift with the lights and whatever fills the view, so start_limelight.sh pins them.
+# UVC controls reset when the camera is replugged, which is why the bridge (not a one-off command) sets them.
+p.add_argument("--ctrl", action="append", default=[], help="V4L2 control name=value (see robot/v4l2_ctl.py)")
 args = p.parse_args()
 
 sock = zmq.Context().socket(zmq.PUB)
 sock.setsockopt(zmq.SNDHWM, 2)
 sock.bind(f"tcp://*:{args.port}")
+
+
+def apply_controls(dev):
+    import v4l2_ctl  # robot/v4l2_ctl.py, next to this file
+    fd = os.open(dev, os.O_RDWR)
+    try:
+        ctrls = v4l2_ctl.controls(fd)
+        for kv in args.ctrl:  # in order: auto_exposure=1 has to come before exposure_time_absolute
+            name, v = kv.split("=", 1)
+            if name not in ctrls:
+                print(f"control {name} not supported by {dev}, skipped", flush=True)
+                continue
+            try:
+                fcntl.ioctl(fd, v4l2_ctl.VIDIOC_S_CTRL, v4l2_ctl.Control(id=ctrls[name]["id"], value=int(v)))
+            except OSError as e:
+                print(f"control {name}={v} rejected: {e}", flush=True)
+        now = v4l2_ctl.controls(fd)
+        print("camera controls: " + " ".join(f"{kv.split('=')[0]}={now.get(kv.split('=')[0], {}).get('value')}"
+                                             for kv in args.ctrl), flush=True)
+    finally:
+        os.close(fd)
 
 
 def open_stream():
@@ -41,6 +67,8 @@ def open_stream():
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            if cap.isOpened() and args.ctrl:
+                apply_controls(os.path.realpath(args.url))
         else:
             cap = cv2.VideoCapture(args.url, cv2.CAP_FFMPEG)
         if cap.isOpened():

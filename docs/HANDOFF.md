@@ -26,12 +26,22 @@ Background on the event/plan: `docs/TEAM_CONTEXT.md`. Arm setup reference: `docs
 
 ## Status right now
 - ⛔ **BLOCKER: follower gripper motor #6 not answering on any ID** (after an overload). Next: power-cycle follower → reseat the 3-pin cable between motor #5 (wrist roll) and #6 (gripper) → if still dead, get a spare STS3215 or a spare follower arm from the AMD hardware desk (new servo needs ID 6 + gripper recalibration).
-- Dataset `Neevdharod/so101_pick_place` (local: `~/hackathon/data/so101_pick_place`): 2 episodes, ep 0 marked bad, so **1 good**. Target 50. Task text: "pick up the lego brick and place it in the bin".
+- Old dataset `Neevdharod/so101_pick_place` (local `~/hackathon/data/so101_pick_place`, 32+ eps): **don't train on it.** Review of eps 0–31: grasps are fine in 30/32, but the screwdriver is dropped somewhere different every time (release pan std 22°, no bin), eps 1/6/7/8/12 end still squeezing the gripper, and the task text says "lego brick".
+- **New dataset `Neevdharod/so101_screwdriver_bin`** (record.sh + dashboard default): task "pick up the screwdriver and place it in the bin", 25 s cap. Target 50 good.
+
+## Recording protocol (what makes the data good)
+1. **One taped-down bin**, the same spot every episode. A consistent drop spot matters most: ACT averages demos that disagree.
+2. **4–5 taped start spots** for the screwdriver, ~10 demos each, handle pointing the same way.
+3. Same rest pose at start and end. **Open the gripper wide** (the old data opened only ~10/100) and fully release before DONE.
+4. One smooth reach → grab → lift → drop → return. REDO anything fumbled.
+5. Clear table, no people or hands in view, same lighting. Wrist cam exposure/WB are now locked by the bridge; after a restart, copy the `Pin them:` line from `~/cam_wrist.log` so every session uses the same values.
+6. Every ~10 episodes: `bash ~/hackathon/robot/record.sh review`. It flags NO_GRASP / NOT_RELEASED / PLACE_OFF / START_NOT_REST etc. and writes contact sheets to `~/hackathon/review/`. Aim for drop-spot pan spread < 5°.
+7. Optional: turn off the Limelight crosshair in its web UI (http://172.29.0.1:5801 from the GMKtec), **without moving the camera**, before starting the new dataset.
 - `Neevdharod/test_run` (2 eps) on the Hub, private: just a pipeline test.
 - Hugging Face on the GMKtec is logged in as **Neevdharod**.
 
 ## Training plan (after ~50 good episodes)
-- **ACT** (guaranteed baseline) on Radeon Cloud: upload `lerobot_src.tgz` (GMKtec's exact LeRobot 0.6.2 source) + `training/` → `bash training/cloud_setup.sh` (~1 min; uses the image's torch 2.9.1+rocm) → `bash training/train.sh real so101_pick_place`. Open issue: torchcodec 0.11 fails to load on the cloud image's torch; fall back to PyAV (`--dataset.video_backend=pyav`) if pinning `torchcodec==0.9.*` doesn't work.
+- **ACT** (guaranteed baseline) on Radeon Cloud: upload `lerobot_src.tgz` (GMKtec's exact LeRobot 0.6.2 source) + `training/` → `bash training/cloud_setup.sh` (~1 min; uses the image's torch 2.9.1+rocm) → `bash training/train.sh real so101_screwdriver_bin`. Open issue: torchcodec 0.11 fails to load on the cloud image's torch; fall back to PyAV (`--dataset.video_backend=pyav`) if pinning `torchcodec==0.9.*` doesn't work.
   - LeRobot's train script sets `cudnn.benchmark=True`, which on ROCm stalls for minutes (MIOpen exhaustive search). cloud_setup.sh patches it off.
   - Measured: ~3.3 s/step at batch 64 with 640x480; 320x240 should be much faster.
   - Cloud disk is wiped between launches: push checkpoints to the Hub.
