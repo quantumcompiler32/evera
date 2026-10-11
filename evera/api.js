@@ -3,6 +3,7 @@
 //
 //   GET  /api/status           {state, mode, running, message, cams:{top, wrist}, ...}
 //   POST /api/policy           {ckpt, task, secs} → "started" | error string
+//   POST /api/replay           {episode?} replay a recorded demo episode → "started" | error string
 //   POST /api/practice         teleop: the leader arm drives the follower (nothing recorded)
 //   POST /api/key {k:"q"}      stop (SIGINT); the arm returns to its start pose
 //   GET  /stream/top|wrist     MJPEG
@@ -89,6 +90,7 @@ export class Backend {
   }
 
   run(mode) {
+    if (mode.replay) return this.post('/api/replay', { secs: mode.secs });
     return this.post('/api/policy', { ckpt: mode.ckpt || '', task: mode.task, secs: mode.secs });
   }
 
@@ -148,7 +150,7 @@ class Sim {
   }
 
   post(path, body) {
-    if (path === '/api/policy') {
+    if (path === '/api/policy' || path === '/api/replay') {
       if (this.running) return 'a session is already running';
       this.clear();
       this.running = true;

@@ -11,6 +11,7 @@
 #   bash ~/hackathon/robot/record.sh status      # how many episodes so far, which are marked bad
 #   bash ~/hackathon/robot/record.sh upload      # good -> $DATASET, bad -> ${DATASET}_rejects on Hugging Face
 #   bash ~/hackathon/robot/record.sh review [N]  # quality report + contact sheets for episodes N.. (safe while recording)
+#   bash ~/hackathon/robot/record.sh replay E    # play episode E of $REPLAY_DATASET back on the follower (open loop)
 # Each episode: EP_TIME s to do the task, then RESET_TIME s to put the object back. Never Ctrl-C mid-episode.
 # DATASET defaults to so101_screwdriver_bin (fixed bin + taped start spots). The older so101_pick_place
 # episodes dropped the screwdriver in a different place every time, so they stay out of it.
@@ -26,6 +27,7 @@ EP_TIME="${EP_TIME:-25}"  # a cap: press DONE as soon as the arm is back at rest
 RESET_TIME="${RESET_TIME:-10}"
 TASK="${TASK:-pick up the screwdriver and place it in the bin}"
 DATASET="${DATASET:-so101_screwdriver_bin}"
+REPLAY_DATASET="${REPLAY_DATASET:-so101_pick_place_90_100}"  # all 11 episodes pass review_episodes.py
 CAMS="{scene: {type: zmq, server_address: 127.0.0.1, port: 5555, camera_name: top, width: 320, height: 240, fps: 30, warmup_s: 3}, wrist: {type: zmq, server_address: 127.0.0.1, port: 5556, camera_name: wrist, width: 320, height: 240, fps: 30, warmup_s: 3}}"
 
 # Camera bridges must be running (they serve the Limelight + wrist cam at 320x240)
@@ -96,6 +98,8 @@ PY
   check) REPO=$MAIN; N=0; RESUME=false; CHECK_ONLY=1 ;;
   policy)  # run a trained policy on the follower (no leader needed): record.sh policy <ckpt_dir> [seconds]
         REPO=$MAIN; N=0; RESUME=false; POLICY_CKPT="${2:?checkpoint dir (.../pretrained_model)}"; POLICY_SECS="${3:-30}" ;;
+  replay)  # send a recorded episode's joint targets to the follower: record.sh replay <episode>
+        REPO=Neevdharod/$REPLAY_DATASET; N=0; RESUME=false; REPLAY_EP="${2:?episode index}" ;;
   session)  # driven by the dashboard: N episodes in one connection, keys n/r/q control it
         REPO=$MAIN; N="${2:-50}"; RESET_TIME="${RESET_TIME:-300}"
         if [ "$(count_eps)" -gt 0 ]; then RESUME=true; else RESUME=false; rm -rf "$MAIN_ROOT" "$BAD_FILE"; fi
@@ -143,36 +147,9 @@ sys.exit(0 if ok_all else 1)
 PY
 [ "${CHECK_ONLY:-0}" = 1 ] && exit 0
 
-if [ -n "${POLICY_CKPT:-}" ]; then
-  echo "Running policy $POLICY_CKPT for ${POLICY_SECS}s (max 8 deg per joint per step). Keep a hand near the follower's power plug."
-  set +e
-  lerobot-rollout --strategy.type=base \
-    --policy.path="$POLICY_CKPT" --device=cuda \
-    --robot.type=so101_follower --robot.port="$FOLLOWER_PORT" --robot.id=my_follower \
-    --robot.cameras="$CAMS" --robot.max_relative_target=8 \
-    --task="$TASK" --duration="$POLICY_SECS" --play_sounds=false
-  set -e
-  exit 0
-fi
-
-echo "Recording $N episode(s) -> $REPO  (${EP_TIME}s task, ${RESET_TIME}s reset)"
-echo "Watch for 'Recording episode N' and 'Reset the environment' below."
-set +e   # a gripper "Overload" error at disconnect shouldn't stop us: the episode is already saved by then
-lerobot-record \
-  --robot.type=so101_follower --robot.port="$FOLLOWER_PORT" --robot.id=my_follower \
-  --robot.cameras="$CAMS" \
-  --teleop.type=so101_leader --teleop.port="$LEADER_PORT" --teleop.id=my_leader \
-  --display_data=false --play_sounds=false \
-  --dataset.repo_id="$REPO" --dataset.root="$ROOT" \
-  --dataset.num_episodes="$N" \
-  --dataset.episode_time_s="$EP_TIME" --dataset.reset_time_s="$RESET_TIME" \
-  --dataset.single_task="$TASK" --dataset.push_to_hub=false \
-  --dataset.streaming_encoding=true --dataset.encoder_threads=2 \
-  --resume="$RESUME"
-REC_STATUS=$?
-set -e
-# Always relax the follower afterwards. If the gripper was still squeezing, its overload protection
+# Relax the follower after a run. If the gripper was still squeezing, its overload protection
 # can reject the torque-off command at disconnect and leave it straining; retry here, ignoring errors.
+relax_follower() {
 python - "$FOLLOWER_PORT" <<'PY' 2>/dev/null || true
 import sys, time
 from lerobot.motors import Motor, MotorNormMode
@@ -195,6 +172,57 @@ for _ in range(5):
     time.sleep(0.5)
 bus.port_handler.closePort()
 PY
+}
+
+if [ -n "${POLICY_CKPT:-}" ]; then
+  echo "Running policy $POLICY_CKPT for ${POLICY_SECS}s (max 8 deg per joint per step). Keep a hand near the follower's power plug."
+  set +e
+  lerobot-rollout --strategy.type=base \
+    --policy.path="$POLICY_CKPT" --device=cuda \
+    --robot.type=so101_follower --robot.port="$FOLLOWER_PORT" --robot.id=my_follower \
+    --robot.cameras="$CAMS" --robot.max_relative_target=8 \
+    --task="$TASK" --duration="$POLICY_SECS" --play_sounds=false
+  set -e
+  exit 0
+fi
+
+if [ -n "${REPLAY_EP:-}" ]; then
+  # Open loop: the object and bin must sit where they were in this episode. Each episode starts and
+  # ends at the rest pose; max_relative_target eases the arm in if it starts somewhere else.
+  echo "Replaying episode $REPLAY_EP of $REPO (max 8 deg per joint per step). Keep a hand near the follower's power plug."
+  set +e
+  # STOP sends Ctrl-C. Without a trap bash dies with lerobot-replay and skips relax_follower, which
+  # matters most when STOP lands mid-grasp with the gripper squeezing.
+  trap 'echo "STOP: ending the replay"' INT
+  lerobot-replay \
+    --robot.type=so101_follower --robot.port="$FOLLOWER_PORT" --robot.id=my_follower \
+    --robot.max_relative_target=8 \
+    --dataset.repo_id="$REPO" --dataset.root="$ROOT" --dataset.episode="$REPLAY_EP" \
+    --play_sounds=false
+  trap - INT
+  set -e
+  echo "Replay finished"
+  relax_follower
+  exit 0
+fi
+
+echo "Recording $N episode(s) -> $REPO  (${EP_TIME}s task, ${RESET_TIME}s reset)"
+echo "Watch for 'Recording episode N' and 'Reset the environment' below."
+set +e   # a gripper "Overload" error at disconnect shouldn't stop us: the episode is already saved by then
+lerobot-record \
+  --robot.type=so101_follower --robot.port="$FOLLOWER_PORT" --robot.id=my_follower \
+  --robot.cameras="$CAMS" \
+  --teleop.type=so101_leader --teleop.port="$LEADER_PORT" --teleop.id=my_leader \
+  --display_data=false --play_sounds=false \
+  --dataset.repo_id="$REPO" --dataset.root="$ROOT" \
+  --dataset.num_episodes="$N" \
+  --dataset.episode_time_s="$EP_TIME" --dataset.reset_time_s="$RESET_TIME" \
+  --dataset.single_task="$TASK" --dataset.push_to_hub=false \
+  --dataset.streaming_encoding=true --dataset.encoder_threads=2 \
+  --resume="$RESUME"
+REC_STATUS=$?
+set -e
+relax_follower
 # "one" mode: don't upload after every episode; run `record.sh upload` at the end.
 if [ "$(count_eps)" -le "$EPS_BEFORE" ] && [ "$REPO" = "$MAIN" ]; then
   echo "NOT SAVED: no new episode was recorded (see the error above). Nothing to mark bad."

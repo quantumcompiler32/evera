@@ -77,7 +77,8 @@ S = {
     "log": deque(maxlen=200),
     "message": "",
     "busy": "",  # name of a one-shot job (upload/check) while it runs
-    "mode": "record",  # record | policy
+    "mode": "record",  # record | policy | practice | replay
+    "replay_episode": None,  # the episode the last replay played
     "auto_next": 0,  # seconds of reset before the next episode starts by itself (0 = wait for NEXT)
     "paused": False,
     "reset_gen": 0,
@@ -127,6 +128,10 @@ def parse_line(line):
         set_state("robot", "Robot is running the policy by itself. STOP halts it.")
     elif "Duration limit reached" in line or "Rollout finished" in line:
         set_state("saving", "Policy run finished, returning arm to its start pose...")
+    elif "Replaying episode" in line:
+        set_state("robot", "Robot is replaying a recorded demo. STOP halts it.")
+    elif "Replay finished" in line:
+        set_state("saving", "Replay finished, relaxing the arm...")
     elif "PREFLIGHT FAIL" in line:
         set_state("error", line.strip())
     elif "preflight: all 12 motors OK" in line:
@@ -161,6 +166,39 @@ def reader():
 
 def start_policy(ckpt, secs, task):
     return start_session(0, secs, task, args=["policy", ckpt, str(secs)], mode="policy")
+
+
+REPLAY_DATASET = os.environ.get("REPLAY_DATASET", "so101_pick_place_90_100")  # must match record.sh
+REPLAY_SECS = 25  # every episode in it is 746 frames at 30 fps
+
+
+def replay_episodes():
+    try:
+        return json.loads((HOME / f"hackathon/data/{REPLAY_DATASET}/meta/info.json").read_text())["total_episodes"]
+    except Exception:
+        return 0
+
+
+def pick_replay_episode(n_episodes):
+    """Which episode (0..n_episodes-1) of REPLAY_DATASET the next replay plays back.
+
+    Always the same one: replay is open loop, so the screwdriver must start where it did in that
+    episode. Episode 4 is the smoothest clean take (review_episodes.py: no pauses, start at rest)."""
+    return min(4, n_episodes - 1)
+
+
+def start_replay(episode=None):
+    n = replay_episodes()
+    if not n:
+        return f"no {REPLAY_DATASET} dataset on this machine"
+    ep = pick_replay_episode(n) if episode is None else int(episode)
+    if not 0 <= ep < n:
+        return f"episode {ep} is out of range (0..{n - 1})"
+    r = start_session(0, REPLAY_SECS, "", args=["replay", str(ep)], mode="replay", need_cams=False)
+    if r == "started":
+        S["replay_episode"] = ep
+        S["log"].append(f"dashboard: replaying episode {ep} of {REPLAY_DATASET}")
+    return r
 
 
 def start_practice():
@@ -207,12 +245,12 @@ def _stop_process(p, grace):
     threading.Thread(target=watch, daemon=True).start()
 
 
-def start_session(n, ep_time, task, args=None, mode="record"):
+def start_session(n, ep_time, task, args=None, mode="record", need_cams=True):
     global proc, master_fd
     if S["running"]:
         return "a session is already running"
     dead = [n for n, a in cam_ages().items() if a is None or a > 3]
-    if dead:
+    if dead and need_cams:
         set_state("error", f"Camera not sending frames: {', '.join(dead)}. Check its USB cable, then try again.")
         return "camera down"
     master_fd, slave_fd = pty.openpty()
@@ -233,10 +271,11 @@ def start_session(n, ep_time, task, args=None, mode="record"):
 def send_key(k):
     if not S["running"] or master_fd is None:
         return "no session running"
-    if S["mode"] in ("policy", "practice"):
-        if k == "q":  # lerobot-rollout / lerobot-teleoperate stop on SIGINT (escalates if ignored)
+    if S["mode"] in ("policy", "practice", "replay"):
+        if k == "q":  # lerobot-rollout / -teleoperate / -replay stop on SIGINT (escalates if ignored)
             _stop_process(proc, 15 if S["mode"] == "policy" else 6)
-            set_state("saving", "Stopping the policy, arm returning to its start pose..." if S["mode"] == "policy" else "Stopping practice...")
+            set_state("saving", {"policy": "Stopping the policy, arm returning to its start pose...",
+                                 "replay": "Stopping the replay, arm relaxing..."}.get(S["mode"], "Stopping practice..."))
         return "sent"
     os.write(master_fd, k.encode())
     # Update the banner immediately instead of waiting for LeRobot's log line.
@@ -336,7 +375,9 @@ kbd{background:#2f3542;border-radius:4px;padding:1px 6px;font-size:12px}
 <div><label>trained model</label><br><select id="ckptsel" onchange="ckpt.value=this.value"><option value="/home/aup/hackathon/outputs/rl_act/checkpoints/last/pretrained_model">1. AWR (rl_act), try first</option><option value="/home/aup/hackathon/outputs/bc_act_50_80/checkpoints/last/pretrained_model">2. Plain BC (bc_act_50_80)</option><option value="/home/aup/hackathon/outputs/trial_act/checkpoints/last/pretrained_model">3. First trial (trial_act)</option></select></div>
 <div style="flex:1"><label>checkpoint folder on the GMKtec (filled by the menu)</label><br><input id="ckpt" value="__CKPT__" style="width:100%"></div>
 <div><label>seconds</label><br><input id="psecs" type="number" value="30" style="width:80px"></div>
-<button id="runpolicy" style="background:#8e4ec6" onclick="post('/api/policy',{ckpt:ckpt.value,secs:+psecs.value,task:task.value})">🤖 RUN POLICY</button></div>
+<button id="runpolicy" style="background:#8e4ec6" onclick="post('/api/policy',{ckpt:ckpt.value,secs:+psecs.value,task:task.value})">🤖 RUN POLICY</button>
+<div><label>demo episode (blank = auto)</label><br><input id="repep" type="number" min="0" placeholder="auto" style="width:90px"></div>
+<button id="replay" style="background:#8e4ec6" onclick="post('/api/replay',{episode:repep.value})">▶ REPLAY DEMO</button></div>
 <div class="row"><button class="small" id="markbad" onclick="post('/api/bad')">✗ Mark last saved episode bad</button>
 <button class="small" id="check" onclick="post('/api/check')">Check motors</button>
 <button class="small" id="upload" onclick="post('/api/upload')">⬆ Upload to Hugging Face</button>
@@ -364,13 +405,13 @@ let actx,prevState='';function beep(f,ms,n=1){try{actx=actx||new AudioContext();
 document.addEventListener('click',()=>{actx=actx||new AudioContext()},{once:true});
 async function tick(){try{st=await (await fetch('/api/status')).json()}catch(e){setTimeout(tick,1000);return}
  const b=document.getElementById('banner');b.className=st.state;
- const names={practice:'🕹 PRACTICE: nothing is recorded',robot:'🤖 ROBOT DRIVING ITSELF',idle:'IDLE',starting:'CONNECTING…',recording:'● RECORDING ep '+st.episode,reset:'RESET: get ready',saving:'SAVING…',error:'PROBLEM'};
+ const names={practice:'🕹 PRACTICE: nothing is recorded',robot:st.mode==='replay'?'▶ REPLAYING DEMO ep '+st.replay_episode:'🤖 ROBOT DRIVING ITSELF',idle:'IDLE',starting:'CONNECTING…',recording:'● RECORDING ep '+st.episode,reset:'RESET: get ready',saving:'SAVING…',error:'PROBLEM'};
  document.getElementById('state').textContent=names[st.state]||st.state;
  const el=(Date.now()/1000-st.t_state);document.getElementById('timer').textContent=
   (st.state==='recording'||st.state==='robot')?Math.max(0,Math.ceil(st.ep_time-el))+'s':
   st.state==='reset'?(st.auto_next&&!st.paused?'next in '+Math.max(0,Math.ceil(st.auto_next-el))+'s':(st.paused?'PAUSED ':'')+Math.floor(el)+'s'):'';
  if(st.state!==prevState){if(st.state==='recording')beep(880,180);else if(st.state==='reset')beep(440,250);else if(st.state==='error')beep(220,200,3);prevState=st.state}
- document.getElementById('pause').textContent=st.paused?'▶ RESUME AUTO (P)':'⏸ PAUSE AUTO (P)';document.getElementById('pause').disabled=!st.running||st.mode==='policy';
+ document.getElementById('pause').textContent=st.paused?'▶ RESUME AUTO (P)':'⏸ PAUSE AUTO (P)';document.getElementById('pause').disabled=!st.running||st.mode!=='record';
  document.getElementById('msg').textContent=st.busy?st.busy+'…':st.message;
  const dead=Object.entries(st.cams||{}).filter(([k,a])=>a===null||a>3).map(([k])=>k);const cw=document.getElementById('camwarn');
  cw.style.display=dead.length?'block':'none';cw.textContent=dead.length?'⚠ CAMERA DOWN: '+dead.join(', ')+'. Check its USB cable. Episodes recorded now will be bad (press R / Q).':'';
@@ -379,7 +420,7 @@ async function tick(){try{st=await (await fetch('/api/status')).json()}catch(e){
  const live=st.running,pol=st.mode!=='record';for(const id of ['done','redo'])document.getElementById(id).disabled=!live||pol;
  document.getElementById('stop').disabled=!live;
  document.getElementById('done').textContent=st.state==='reset'?'▶ NEXT EPISODE  (Space)':'✓ DONE  (Space)';
- for(const id of ['start','practice','upload','check','runpolicy'])document.getElementById(id).disabled=live||!!st.busy;
+ for(const id of ['start','practice','upload','check','runpolicy','replay'])document.getElementById(id).disabled=live||!!st.busy;
  const lg=document.getElementById('log');const atBottom=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-5;
  lg.textContent=st.log.join('\n');if(atBottom)lg.scrollTop=lg.scrollHeight;setTimeout(tick,250)}
 tick();
@@ -479,6 +520,10 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 r = start_policy(body.get("ckpt") or DEFAULT_CKPT, max(5, int(body.get("secs", 30))),
                                  body.get("task") or DEFAULT_TASK)
+        elif self.path == "/api/replay":
+            with lock:
+                ep = body.get("episode")
+                r = start_replay(None if ep in (None, "") else ep)
         elif self.path == "/api/settings":
             with lock:
                 if "auto_next" in body:

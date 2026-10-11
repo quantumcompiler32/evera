@@ -5,15 +5,20 @@
 //   ckpt  = checkpoint folder on the GMKtec ('' = the dashboard's default model)
 //   secs  = how long the policy runs before it stops and returns to rest
 //   motion = how the 3D arm animates while it runs: handover | press | hold | dock
+//   replay = true: POST /api/replay instead, which plays back a recorded good demo episode
+//            (so101_pick_place_90_100) on the arm. The dashboard picks the episode.
 
 const ACT_PICK = '/home/aup/hackathon/outputs/rl_act/checkpoints/last/pretrained_model';
 
+// Hand over replays a recorded demo until a learned policy works on the real arm.
+// Delete `replay` to go back to running `ckpt`.
 const pick = (thing, ckpt = '') => ({
   id: 'pick',
   label: 'Hand over',
   task: `pick up the ${thing} and hand it to me`,
   ckpt,
-  secs: 30,
+  replay: true,
+  secs: 25,
   motion: 'handover',
 });
 

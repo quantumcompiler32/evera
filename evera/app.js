@@ -270,7 +270,10 @@ async function release({ say = true } = {}) {
   S.awaitGotIt = null;
   renderRun();
   const r = S.run;
-  if (r && r.phase !== 'saving') {
+  // A replayed demo places the tool by itself; stopping it midway would drop the arm. STOP still works.
+  if (r && r.mode.replay && r.phase !== 'saving') {
+    if (say) evera("I'll set it down in a moment.");
+  } else if (r && r.phase !== 'saving') {
     r.stopped = true;
     r.released = true;
     arm.release();
@@ -715,7 +718,7 @@ arm.onFrame = () => {
       const el = (now - r.t0) / 1000;
       lab = `${r.mode.label} · ${mmss(el)}`;
       pill = `${name} · ${mmss(el)}`;
-      if (r.mode.motion === 'handover' && !r.offered && !r.stopped && el > 5.8) {
+      if (r.mode.motion === 'handover' && !r.mode.replay && !r.offered && !r.stopped && el > 5.8) {
         r.offered = true;
         S.awaitGotIt = r.tool.id;
         renderRun();
