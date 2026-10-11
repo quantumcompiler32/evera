@@ -75,11 +75,11 @@ S = {
     "message": "",
     "busy": "",  # name of a one-shot job (upload/check) while it runs
     "mode": "record",  # record | policy
-    "auto_next": 5,  # seconds of reset before the next episode starts by itself (0 = wait for NEXT)
+    "auto_next": 0,  # seconds of reset before the next episode starts by itself (0 = wait for NEXT)
     "paused": False,
     "reset_gen": 0,
 }
-DEFAULT_CKPT = str(HOME / "hackathon/outputs/trial_act/checkpoints/last/pretrained_model")
+DEFAULT_CKPT = str(HOME / "hackathon/outputs/rl_act/checkpoints/last/pretrained_model")
 proc = None
 master_fd = None
 
@@ -160,6 +160,13 @@ def start_policy(ckpt, secs, task):
     return start_session(0, secs, task, args=["policy", ckpt, str(secs)], mode="policy")
 
 
+def start_practice():
+    r = start_session(0, 30, "", args=["practice"], mode="practice")
+    if r == "started":
+        set_state("practice", "Practice: move the leader arm, the follower copies it. NOTHING is recorded. Press STOP when done.")
+    return r
+
+
 def cam_ages():
     return {n: round(time.time() - t, 1) if t else None for n, t in last_frame_t.items()}
 
@@ -189,10 +196,10 @@ def start_session(n, ep_time, task, args=None, mode="record"):
 def send_key(k):
     if not S["running"] or master_fd is None:
         return "no session running"
-    if S["mode"] == "policy":
-        if k == "q":  # lerobot-rollout stops on SIGINT and returns the arm to its start pose
+    if S["mode"] in ("policy", "practice"):
+        if k == "q":  # lerobot-rollout / lerobot-teleoperate stop on SIGINT
             os.killpg(proc.pid, signal.SIGINT)
-            set_state("saving", "Stopping the policy, arm returning to its start pose...")
+            set_state("saving", "Stopping the policy, arm returning to its start pose..." if S["mode"] == "policy" else "Stopping practice...")
         return "sent"
     os.write(master_fd, k.encode())
     # Update the banner immediately instead of waiting for LeRobot's log line.
@@ -256,7 +263,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport
 .wrap{max-width:1200px;margin:0 auto;padding:16px}
 #banner{border-radius:10px;padding:14px 18px;font-size:22px;font-weight:700;display:flex;justify-content:space-between;align-items:center;background:#2a2f3a}
 #banner.recording{background:var(--red)}#banner.reset{background:var(--blue)}#banner.starting,#banner.saving{background:var(--yellow);color:#111}
-#banner.error{background:#7a1d20}#banner.robot{background:#8e4ec6}#timer{font-variant-numeric:tabular-nums;font-size:30px}
+#banner.error{background:#7a1d20}#banner.practice{background:var(--green)}#banner.robot{background:#8e4ec6}#timer{font-variant-numeric:tabular-nums;font-size:30px}
 #msg{color:var(--mut);margin:8px 2px 12px;min-height:20px}
 .cams{display:grid;grid-template-columns:1fr 1fr;gap:12px}.cam{background:var(--panel);border-radius:10px;padding:8px}
 .cam img{width:100%;aspect-ratio:4/3;object-fit:contain;background:#000;border-radius:6px;display:block}.cam div{color:var(--mut);font-size:13px;margin-top:4px}
@@ -285,10 +292,12 @@ kbd{background:#2f3542;border-radius:4px;padding:1px 6px;font-size:12px}
 <div><label>episodes this session</label><br><input id="n" type="number" value="50" style="width:90px"></div>
 <div><label>max seconds per episode</label><br><input id="ept" type="number" value="__EPT__" style="width:90px"></div>
 <div style="flex:1"><label>task text</label><br><input id="task" value="__TASK__" style="width:100%"></div>
-<div><label>auto-next after (s, 0=off)</label><br><input id="autonext" type="number" value="5" style="width:90px" onchange="post('/api/settings',{auto_next:+this.value})"></div>
-<button id="start" onclick="start()">▶ START SESSION</button></div>
+<div><label>auto-next after (s, 0=off)</label><br><input id="autonext" type="number" value="0" style="width:90px" onchange="post('/api/settings',{auto_next:+this.value})"></div>
+<button id="start" onclick="start()">▶ START SESSION</button>
+<button id="practice" style="background:#30a46c" onclick="post('/api/practice')">🕹 PRACTICE (not recorded)</button></div>
 <div class="row" style="align-items:end;background:#181b22;border-radius:10px;padding:10px">
-<div style="flex:1"><label>trained model (checkpoint folder on the GMKtec)</label><br><input id="ckpt" value="__CKPT__" style="width:100%"></div>
+<div><label>trained model</label><br><select id="ckptsel" onchange="ckpt.value=this.value"><option value="/home/aup/hackathon/outputs/rl_act/checkpoints/last/pretrained_model">1. AWR (rl_act), try first</option><option value="/home/aup/hackathon/outputs/bc_act_50_80/checkpoints/last/pretrained_model">2. Plain BC (bc_act_50_80)</option><option value="/home/aup/hackathon/outputs/trial_act/checkpoints/last/pretrained_model">3. First trial (trial_act)</option></select></div>
+<div style="flex:1"><label>checkpoint folder on the GMKtec (filled by the menu)</label><br><input id="ckpt" value="__CKPT__" style="width:100%"></div>
 <div><label>seconds</label><br><input id="psecs" type="number" value="30" style="width:80px"></div>
 <button id="runpolicy" style="background:#8e4ec6" onclick="post('/api/policy',{ckpt:ckpt.value,secs:+psecs.value,task:task.value})">🤖 RUN POLICY</button></div>
 <div class="row"><button class="small" id="markbad" onclick="post('/api/bad')">✗ Mark last saved episode bad</button>
@@ -318,7 +327,7 @@ let actx,prevState='';function beep(f,ms,n=1){try{actx=actx||new AudioContext();
 document.addEventListener('click',()=>{actx=actx||new AudioContext()},{once:true});
 async function tick(){try{st=await (await fetch('/api/status')).json()}catch(e){setTimeout(tick,1000);return}
  const b=document.getElementById('banner');b.className=st.state;
- const names={robot:'🤖 ROBOT DRIVING ITSELF',idle:'IDLE',starting:'CONNECTING…',recording:'● RECORDING ep '+st.episode,reset:'RESET: get ready',saving:'SAVING…',error:'PROBLEM'};
+ const names={practice:'🕹 PRACTICE: nothing is recorded',robot:'🤖 ROBOT DRIVING ITSELF',idle:'IDLE',starting:'CONNECTING…',recording:'● RECORDING ep '+st.episode,reset:'RESET: get ready',saving:'SAVING…',error:'PROBLEM'};
  document.getElementById('state').textContent=names[st.state]||st.state;
  const el=(Date.now()/1000-st.t_state);document.getElementById('timer').textContent=
   (st.state==='recording'||st.state==='robot')?Math.max(0,Math.ceil(st.ep_time-el))+'s':
@@ -330,10 +339,10 @@ async function tick(){try{st=await (await fetch('/api/status')).json()}catch(e){
  cw.style.display=dead.length?'block':'none';cw.textContent=dead.length?'⚠ CAMERA DOWN: '+dead.join(', ')+'. Check its USB cable. Episodes recorded now will be bad (press R / Q).':'';
  good.textContent=st.counts.good;total.textContent=st.counts.total;prog.style.width=Math.min(100,st.counts.good/50*100)+'%';
  bad.textContent='bad: '+(st.counts.bad.length?st.counts.bad.join(', '):'none');
- const live=st.running,pol=st.mode==='policy';for(const id of ['done','redo'])document.getElementById(id).disabled=!live||pol;
+ const live=st.running,pol=st.mode!=='record';for(const id of ['done','redo'])document.getElementById(id).disabled=!live||pol;
  document.getElementById('stop').disabled=!live;
  document.getElementById('done').textContent=st.state==='reset'?'▶ NEXT EPISODE  (Space)':'✓ DONE  (Space)';
- for(const id of ['start','upload','check','runpolicy'])document.getElementById(id).disabled=live||!!st.busy;
+ for(const id of ['start','practice','upload','check','runpolicy'])document.getElementById(id).disabled=live||!!st.busy;
  const lg=document.getElementById('log');const atBottom=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-5;
  lg.textContent=st.log.join('\n');if(atBottom)lg.scrollTop=lg.scrollHeight;setTimeout(tick,250)}
 tick();
@@ -395,6 +404,9 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 r = start_session(max(1, int(body.get("n", TARGET))), max(5, int(body.get("ep_time", DEFAULT_EP_TIME))),
                                   body.get("task") or DEFAULT_TASK)
+        elif self.path == "/api/practice":
+            with lock:
+                r = start_practice()
         elif self.path == "/api/policy":
             with lock:
                 r = start_policy(body.get("ckpt") or DEFAULT_CKPT, max(5, int(body.get("secs", 30))),

@@ -67,6 +67,11 @@ def open_stream():
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 30)  # without this the icSpring cam ran at 20 fps
+            if cap.isOpened():
+                fcc = int(cap.get(cv2.CAP_PROP_FOURCC)).to_bytes(4, "little").decode(errors="replace")
+                print(f"capture mode {fcc} {cap.get(cv2.CAP_PROP_FRAME_WIDTH):.0f}x{cap.get(cv2.CAP_PROP_FRAME_HEIGHT):.0f}"
+                      f" @ {cap.get(cv2.CAP_PROP_FPS):g} fps", flush=True)
             if cap.isOpened() and args.ctrl:
                 apply_controls(os.path.realpath(args.url))
         else:

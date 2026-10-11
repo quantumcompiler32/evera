@@ -106,8 +106,8 @@ if __name__ == "__main__":
         print(ws.wait_for("set_stream_rate_response") or "no response")
     elif cmd == "decorations":
         on = sys.argv[2] == "on"
-        # the UI sends suppress_image_decorations with the boolean string as its args
-        ws.send("suppress_image_decorations", args=list(str(not on).lower()))
+        # "1" = suppress (tested on our 3A). Restarts the MJPEG server: :5800 drops for a few seconds.
+        ws.send("suppress_image_decorations", args=["0" if on else "1"])
         print("crosshair/text overlay", "shown" if on else "hidden")
     else:
         sys.exit(__doc__)

@@ -24,7 +24,7 @@ Read this first. It covers what we're building, what's already done, and what th
 ## Software stack (pinned, don't change versions)
 - **LeRobot v0.4.1**, **Python 3.10**, **PyTorch 2.7.1** (LeRobot needs torch < 2.8), **ffmpeg 7.1.1** (required: training crashes without it).
 - Policy: **ACT** = a ResNet18 CNN image encoder plus a transformer that predicts chunks of 100 future joint positions. It's trained by imitation from about 50 human teleop demos.
-- The **Hugging Face** account holding datasets and models is **`Neevdharod`** (capital N). Dataset name: `Neevdharod/so101_pick_place`.
+- The **Hugging Face** account holding datasets and models is **`Neevdharod`** (capital N). Dataset name: `Neevdharod/so101_screwdriver_bin` (the older `so101_pick_place` had an inconsistent drop spot; see HANDOFF.md).
 - On Windows, arm ports are `COM3`/`COM4`, not `/dev/ttyACM*`, and inference runs with `--policy.device=cpu`.
 
 ## Who does what
