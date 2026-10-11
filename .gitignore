@@ -12,3 +12,7 @@ checkpoints/
 wandb/
 *.mp4
 *.parquet
+
+# robot/training
+training/lerobot_src.tgz
+*.tgz

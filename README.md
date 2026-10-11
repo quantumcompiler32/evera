@@ -12,3 +12,9 @@ Git. A separate held-out Limelight test set is still needed before any reliable
 accuracy or autonomous arm claim.
 
 See [the architecture](docs/ARCHITECTURE.md) and [the SO-101 setup guide](docs/SETUP.md).
+
+## Robot demonstrations and policy training
+
+[`robot/`](robot/README.md) records SO-101 teleoperation datasets on the NucBox through a browser
+dashboard (Limelight top camera + wrist camera). [`training/`](training/README.md) trains an ACT
+policy on AMD Radeon Cloud. Current state and next steps are in [docs/HANDOFF.md](docs/HANDOFF.md).
