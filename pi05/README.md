@@ -9,6 +9,9 @@ Copy the scripts to the NucBox from a laptop checkout with `bash pi05/sync.sh` (
 | Script          | What it does                                                                        |
 | --------------- | ----------------------------------------------------------------------------------- |
 | `train.sh`      | Fine-tunes `lerobot/pi05_base` on the recorded demos; checkpoints every 500 steps   |
+| `make_subset.py` | Cuts a recorded dataset to an episode range minus bad episodes, optionally pushes it |
+| `snapshot_dataset.py` | Copies the finished episodes of a dataset that is still being recorded |
+| `cloud_train.sh` | Runs the fine-tune on the Radeon Cloud Jupyter instance (upload it; GitHub is blocked there) |
 | `check_ckpt.py` | Compares a checkpoint's predicted actions with recorded teleop, without the arm     |
 | `rollout.sh`    | Runs a checkpoint on the follower arm (RTC inference, so the arm doesn't stall)     |
 | `bench_gpu.py`  | Synthetic memory / speed benchmark with random inputs                               |
