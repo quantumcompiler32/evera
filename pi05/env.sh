@@ -9,7 +9,7 @@ export TORCH_BLAS_PREFER_HIPBLASLT=0
 HF_USER=Neevdharod
 DATA_DIR=~/hackathon/data
 OUT_DIR=~/pi05/outputs
-TASK="${TASK:-pick up the lego brick and place it in the bin}"
+TASK="${TASK:-pick up the screwdriver and place it in the bin}"
 
 # Same stable port, robot id and camera keys as hackathon/robot/record.sh, so rollout observations
 # have exactly the names and resolution the policy was trained on.

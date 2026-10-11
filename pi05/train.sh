@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fine-tune pi0.5 (lerobot/pi05_base) on our SO-101 demos on the GMKtec's Radeon 8060S.
-#   bash ~/pi05/train.sh                                  # full 50-episode set, Neevdharod/so101_pick_place
+#   bash ~/pi05/train.sh                                  # Neevdharod/so101_screwdriver_bin
 #   DATASET=test_run STEPS=20 bash ~/pi05/train.sh        # smoke test on the 2-episode recording
 # Runs in the foreground; wrap in tmux/nohup for long runs. Checkpoints land in ~/pi05/outputs/<run>/.
 set -euo pipefail
@@ -9,7 +9,7 @@ set -euo pipefail
 # (task + 6 discretized joints) is ~42 PaliGemma tokens, so the default 200 is mostly padding.
 source "$(dirname "$0")/env.sh"
 
-DATASET="${DATASET:-so101_pick_place}"
+DATASET="${DATASET:-so101_screwdriver_bin}"
 STEPS="${STEPS:-3000}"  # pi05's cosine LR schedule auto-shrinks its 1k warmup / 30k decay to fit
 RUN="pi05_${DATASET}_$(date +%m%d_%H%M)"
 
