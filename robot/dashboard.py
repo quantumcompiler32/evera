@@ -34,6 +34,9 @@ DEFAULT_EP_TIME = 25
 TARGET = 50
 CAMS = {"top": 5555, "wrist": 5556}
 PREVIEW_FPS = 8  # keep Wi-Fi load low; recording itself is unaffected
+EVERA_DIR = Path(os.environ.get("EVERA_DIR", HOME / "hackathon/evera")).resolve()  # the iPad app, served at /evera/
+MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".json": "application/json",
+        ".png": "image/png", ".svg": "image/svg+xml", ".stl": "model/stl", ".urdf": "application/xml"}
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 # ---------------------------------------------------------------- cameras
@@ -353,6 +356,17 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def end_headers(self):
+        # Lets the EVERA iPad app call the API even when it's served from somewhere else.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.end_headers()
+
     def _json(self, obj, code=200):
         body = json.dumps(obj).encode()
         self.send_response(code)
@@ -361,7 +375,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _static(self):
+        """Serve the EVERA app from ~/hackathon/evera at /evera/."""
+        rel = self.path.split("?")[0][len("/evera"):].lstrip("/") or "index.html"
+        f = (EVERA_DIR / rel).resolve()
+        if EVERA_DIR not in f.parents or not f.is_file():
+            return self.send_error(404)
+        body = f.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", MIME.get(f.suffix.lower(), "application/octet-stream"))
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
+        if self.path.split("?")[0] == "/evera":
+            self.send_response(301)
+            self.send_header("Location", "/evera/")
+            return self.end_headers()
+        if self.path.startswith("/evera/"):
+            return self._static()
         if self.path == "/":
             body = (PAGE.replace("__CKPT__", DEFAULT_CKPT).replace("__TASK__", DEFAULT_TASK)
                     .replace("__EPT__", str(DEFAULT_EP_TIME)).encode())

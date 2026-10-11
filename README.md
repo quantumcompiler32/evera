@@ -18,3 +18,11 @@ See [the architecture](docs/ARCHITECTURE.md) and [the SO-101 setup guide](docs/S
 [`robot/`](robot/README.md) records SO-101 teleoperation datasets on the NucBox through a browser
 dashboard (Limelight top camera + wrist camera). [`training/`](training/README.md) trains an ACT
 policy on AMD Radeon Cloud. Current state and next steps are in [docs/HANDOFF.md](docs/HANDOFF.md).
+
+## evera iPad app
+
+[`evera/`](evera/README.md) is a JARVIS-style iPad web app: tap a tool or say "evera, pass me the
+multimeter" and the arm runs that action through the dashboard's `/api/policy`. It shows a live 3D
+SO-101 built from the URDF, the camera feeds, and a STOP button. `robot/dashboard.py` serves it at `/evera/`.
+
+![evera on the iPad](docs/images/evera_preview.png)

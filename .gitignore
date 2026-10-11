@@ -16,3 +16,6 @@ wandb/
 # robot/training
 training/lerobot_src.tgz
 *.tgz
+
+# local Claude Code config
+.claude/

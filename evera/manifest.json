@@ -1,0 +1,15 @@
+{
+  "name": "evera",
+  "short_name": "evera",
+  "description": "Voice-controlled robotic workbench assistant for the SO-101 arm",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#080C13",
+  "theme_color": "#080C13",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

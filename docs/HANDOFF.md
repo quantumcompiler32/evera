@@ -1,7 +1,7 @@
 # Handoff: current state (Sat Oct 10, ~6:40 PM)
 
 Read this first if you're picking up on a new computer (or a new Claude session).
-Background on the event/plan: `CONTEXT.md`. Arm setup reference: `RUNBOOK.md`.
+Background on the event/plan: `TEAM_CONTEXT.md`. Arm setup reference: `ARM_RUNBOOK.md`.
 
 ## Where things run
 | Machine | Address | What's on it |
@@ -9,6 +9,11 @@ Background on the event/plan: `CONTEXT.md`. Arm setup reference: `RUNBOOK.md`.
 | **GMKtec NucBox EVO-X2** (Ubuntu 26.04, Ryzen AI Max+, Radeon 8060S, LeRobot **0.6.2** in conda env `lerobot`) | `ssh aup@<GMKTEC_IP>` | Arms, cameras, recording, **dashboard**, all scripts in `~/hackathon/` |
 | AMD Radeon Cloud (Jupyter) | radeon-global.anruicloud.com | Training only. **Disk is wiped on every launch.** Stop the instance when idle (1 credit/h) |
 | Any laptop | browser | Dashboard: **http://<GMKTEC_IP>:8080** |
+
+## evera iPad app (Mission 2 demo UI)
+- `evera/`: a JARVIS-style iPad web app with a 3D SO-101, tool orbs, voice (OpenAI + ElevenLabs) and a STOP button. Each tool mode runs through `/api/policy`.
+- Served by `robot/dashboard.py` at `/evera/`. That file also sends CORS headers.
+- Deploy, tunnel (HTTPS for the mic), iPad setup, and how to point modes at new checkpoints: **`evera/README.md`**. Original build spec: `docs/EVERA_PROMPT.md`.
 
 ## Recording dashboard (the main tool)
 - http://<GMKTEC_IP>:8080 shows live top + wrist cameras and START SESSION / DONE-NEXT (Space) / REDO (R) / STOP (Q) / Check motors / Mark bad / Upload.
@@ -56,4 +61,6 @@ Background on the event/plan: `CONTEXT.md`. Arm setup reference: `RUNBOOK.md`.
 ## Files
 - `robot/`: GMKtec-side: `dashboard.py`, `record.sh`, `limelight_zmq.py`, `start_limelight.sh`, `check_arms.py`, `test_camera.py`
 - `training/`: cloud-side: `cloud_setup.sh`, `train.sh`, `check_dataset.py`, `push_checkpoint.sh`, `bench.py`
-- `CONTEXT.md` (team context, detection plan), `RUNBOOK.md` (setup steps), this file.
+- `evera/`: iPad control app (served by `dashboard.py` at `/evera/`)
+- `robot/calibration/`: backup of the `my_follower` / `my_leader` calibration files from the GMKtec
+- `docs/TEAM_CONTEXT.md` (team context, detection plan), `docs/ARM_RUNBOOK.md` (setup steps), this file.
