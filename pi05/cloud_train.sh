@@ -14,6 +14,7 @@
 set -euo pipefail
 cd /workspace
 export TMPDIR=/workspace/tmp HF_HOME=/workspace/.hf MIOPEN_FIND_MODE=FAST PYTHONWARNINGS=ignore
+unset HF_HUB_OFFLINE  # set again below once everything is cached; an inherited value breaks the login check
 mkdir -p "$TMPDIR" "$HF_HOME/hub"
 
 DATASET="${DATASET:-Neevdharod/so101_screwdriver_bin}"
