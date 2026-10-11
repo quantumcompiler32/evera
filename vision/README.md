@@ -1,11 +1,11 @@
 # Workshop instance segmentation
 
-The current experimental pipeline is a convolutional Mask R-CNN with a ResNet-50/FPN backbone. It
-predicts a separate pixel mask and class score for each `raspberry_pi`,
-`arduino`, `pinecil`, and `wire` instance. Each loose wire gets its own mask,
-including at crossings. Training and inference run on the AMD NucBox's ROCm
-PyTorch GPU. The Limelight 3A supplies video over USB networking; the CNN runs
-on the NucBox, not inside the Limelight.
+The current **provisional** live model is a YOLO11n-seg convolutional network
+trained on proposals and exported to ONNX. `onnx_segmenter.py` runs masks on the
+NucBox CPU using only NumPy, ONNX Runtime, and OpenCV. Its four classes, in
+order, are `raspberry_pi`, `arduino`, `pinecil`, and `wire`. Every visible loose
+wire should receive its own instance mask. The earlier Mask R-CNN code remains
+as an experimental baseline; it has not produced a checkpoint.
 
 ## Current data and evidence
 
@@ -19,6 +19,12 @@ on the NucBox, not inside the Limelight.
 - One held-out earlier camera scene with proposed masks cannot establish
   real-world accuracy. A later Limelight capture session must be labeled and
   reserved for final evaluation. Current scores are not a basis for arm control.
+- A new 45-second `camera1` session yielded 210 captures; `select_frames.py`
+  reduced it to 30 representative frames with rotations and partial occlusion.
+  These new frames are **not labeled yet**. On them, the provisional model made
+  23 Pi, 23 Arduino, 22 Pinecil, and only 1 wire prediction at 0.4 confidence.
+  This is a failure check, not recall or accuracy, because no reviewed truth
+  exists for that session.
 
 All images, masks, and weights are stored outside Git.
 
@@ -49,17 +55,18 @@ For example, on the NucBox:
 Run it only while the objects are being rearranged. Repeat with a new folder
 for another session, and reserve one whole reviewed session for final testing.
 
-Run on the NucBox from `~/evera-vision`:
+The preview currently uses the provisional CPU ONNX model. Run on the NucBox
+from `~/evera-vision`:
 
 ```bash
 .venv/bin/python vision/live_masks.py --camera http://172.29.0.1:5802/ \
-  --port 8765 --captures captures/limelight-candidates
+  --port 8765 --captures captures/limelight-candidates \
+  --checkpoint outputs/yolo-seg/workshop-provisional/weights/best.onnx
 ```
 
-After a validated checkpoint exists, add
-`--checkpoint outputs/segmentation/workshop/best.pt --device cuda`. The live
-page colors each predicted mask, displays a 3-by-3 alignment grid, and saves
-raw frames. The `GET /health` endpoint reports camera and model status.
+The page colors each predicted mask, displays a 3-by-3 alignment grid, and
+saves raw frames. Its provisional warning is deliberate. `GET /health` reports
+camera/model status, focus score, and CPU mask processing time.
 Forward remote port 8765 through SSH and open `http://127.0.0.1:8765/`.
 
 ## Data preparation and training
@@ -92,11 +99,36 @@ frames while objects are moved under the fixed Limelight. It does not auto-label
 them. The captured frames require individual object and wire masks.
 
 The first full Mask R-CNN run was stopped before producing a checkpoint. The
-[research comparison](../docs/research/evera-segmentation-options.md) recommends
-trying YOLO11n-seg next for a smaller CPU model, once enough real camera masks
-have been reviewed. That is a recommendation, not a trained model or a measured
-accuracy/speed result. Ultralytics code and trained models use AGPL-3.0 by
-default; check that license before distributing a derivative.
+[research comparison](../docs/research/evera-segmentation-options.md) led to a
+small YOLO11n-seg baseline. Its conversion excluded 77 WireSeg images whose
+disconnected wires could not be accurately represented by one polygon,
+retaining 237 wire instances. Seven camera training scenes were each repeated
+20 times to balance the synthetic wire images; repetition adds no independent
+camera evidence. The one validation image is an unreviewed SAM proposal with no
+wire, so its near-perfect reported mAP is **not a valid quality result**.
+
+```bash
+.venv/bin/python vision/export_yolo_seg_dataset.py \
+  --dataset datasets/segmentation/workshop-mixed \
+  --output datasets/yolo-seg/workshop-provisional-clean \
+  --allow-unreviewed --camera-repeat 20
+.venv/bin/python vision/train_yolo_seg.py \
+  --data datasets/yolo-seg/workshop-provisional-clean/data.yaml \
+  --output outputs/yolo-seg/workshop-provisional --epochs 15 --batch 8 --device 0
+.venv/bin/python -c "from ultralytics import YOLO; YOLO('outputs/yolo-seg/workshop-provisional/weights/best.pt').export(format='onnx', imgsz=640, opset=17, nms=False, simplify=False)"
+.venv/bin/python vision/test_segmenter.py \
+  --model outputs/yolo-seg/workshop-provisional/weights/best.onnx \
+  --frames captures/camera1-session-20261010-selected
+```
+
+`test_segmenter.py` checks output types, boxes, and mask dimensions on five
+saved frames; it does not test recognition accuracy. The custom ONNX mask
+decoder matched reference PyTorch masks at IoU 0.978–0.998 on five frames.
+The live CPU mask pass had a 26.6 ms median and 30.3 ms sampled p95 in 39
+status snapshots while one preview server ran. This excludes camera arrival
+and browser delivery latency. Held-out accuracy is still needed. Ultralytics code
+and trained models use AGPL-3.0 by default; check that license before
+distributing a derivative.
 
 ## References
 

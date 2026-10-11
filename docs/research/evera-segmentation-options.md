@@ -22,3 +22,12 @@ Research snapshot: 2026-10-10. Scope: `raspberry_pi`, `arduino`, Pinecil solderi
 ## Immediate decision
 
 The highest-value next step is to confirm which final input reaches the robot app: direct Limelight stream or the team's 640×480 camera-hub `camera1` feed. Then collect and review new masks in that exact view, train the small segmenter, and measure its accuracy and CPU latency. Continuing to add internet photos or epochs before fixing the input/evaluation split can make training metrics look better without improving the live system.
+
+## Implementation update
+
+The clean Limelight viewfinder now feeds a separate `camera1` 640×480 ZMQ relay;
+the existing robot `top` and `wrist` relays were left alone. A provisional
+YOLO11n-seg ONNX model runs on the NucBox CPU. Thirty newly recorded camera1
+frames expose its largest gap: only one `wire` prediction at 0.4 confidence.
+Those frames still need reviewed labels, and the nine-class box interface still
+needs an explicit revision before robot integration.

@@ -8,12 +8,31 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import cv2
 import numpy as np
 
-from segmentation_dataset import CLASS_NAMES
-from segmentation_model import draw_masks, load_model, predict_frame
+from onnx_segmenter import CLASS_NAMES, Segmenter
+
+
+COLORS = {"raspberry_pi": (30, 230, 90), "arduino": (255, 175, 40),
+          "pinecil": (40, 150, 255), "wire": (235, 70, 220)}
+
+
+def draw_masks(frame: np.ndarray, results):
+    overlay = frame.copy()
+    for name, _, mask in results:
+        overlay[mask] = COLORS[name]
+    painted = cv2.addWeighted(frame, 0.55, overlay, 0.45, 0)
+    for name, score, mask in results:
+        contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(painted, contours, -1, COLORS[name], 2)
+        ys, xs = np.where(mask)
+        cv2.putText(painted, f"{name} {score:.2f}",
+                    (int(xs.min()), max(20, int(ys.min()) - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, COLORS[name], 2)
+    return painted
 
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -23,14 +42,14 @@ main{max-width:900px;margin:auto}h1{font-size:24px}p{color:#c6ceda}
 img{display:block;width:100%;background:#000;border:1px solid #424b59}
 button{font:inherit;padding:9px 14px;margin:8px 8px 0 0;border:0;border-radius:7px;background:#2878ee;color:white;cursor:pointer}
 #status{min-height:24px;margin-top:12px}</style></head><body><main>
-<h1>Limelight 3A · live mask view</h1><p id="mode">Checking camera…</p><p id="focus">Focus score: measuring…</p>
+<h1>Limelight 3A · live mask view</h1><p id="mode">Checking camera…</p><p id="focus">Focus score: measuring…</p><p id="latency"></p><p id="quality"></p>
 <img src="/stream" alt="Live Limelight feed with alignment grid and instance masks">
 <p>Saved photos are raw camera frames without the grid or colored masks.</p>
 <button onclick="capture('raspberry_pi')">Capture Pi</button><button onclick="capture('arduino')">Capture Arduino</button>
 <button onclick="capture('pinecil')">Capture Pinecil</button><button onclick="capture('wire')">Capture wires</button>
 <button onclick="capture('empty')">Capture empty scene</button><div id="status" role="status"></div>
 <script>async function capture(label){try{const r=await fetch('/capture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})});const d=await r.json();document.getElementById('status').textContent=r.ok?'Saved '+d.file:'Capture failed: '+d.error}catch(e){document.getElementById('status').textContent='Capture failed: '+e}}
-async function status(){try{const d=await(await fetch('/health')).json();document.getElementById('mode').textContent=d.camera_ready?(d.model_ready?'CNN mask overlay active':'Camera live; CNN checkpoint not loaded yet'):'Waiting for camera frames…';document.getElementById('focus').textContent=d.focus_score===null?'Focus score: waiting for frame':'Focus score: '+d.focus_score+' (higher is sharper)'}catch(e){document.getElementById('mode').textContent='Preview server unavailable'}}status();setInterval(status,1000)</script>
+async function status(){try{const d=await(await fetch('/health')).json();document.getElementById('mode').textContent=d.camera_ready?(d.model_ready?'CNN mask overlay active':'Camera live; CNN checkpoint not loaded yet'):'Waiting for camera frames…';document.getElementById('focus').textContent=d.focus_score===null?'Focus score: waiting for frame':'Focus score: '+d.focus_score+' (higher is sharper)';document.getElementById('latency').textContent=d.inference_ms===null?'':'CPU mask inference: '+d.inference_ms+' ms';document.getElementById('quality').textContent=d.model_ready?'Provisional model: masks have not passed a reviewed camera test set; do not use for robot commands.':''}catch(e){document.getElementById('mode').textContent='Preview server unavailable'}}status();setInterval(status,1000)</script>
 </main></body></html>"""
 
 
@@ -67,6 +86,10 @@ class Camera:
         with self.lock:
             return None if self.frame is None else self.frame.copy()
 
+    def latest_with_timestamp(self):
+        with self.lock:
+            return (None if self.frame is None else self.frame.copy(), self.last_frame_at)
+
 
 def grid(frame):
     height, width = frame.shape[:2]
@@ -85,25 +108,47 @@ def focus_score(frame):
 
 
 def serve(camera, captures: Path, port: int, checkpoint: Path | None, device: str, confidence: float):
-    model = load_model(checkpoint, device) if checkpoint else None
-    state = {"frame": None, "model_error": None}
+    backend = None
+    if checkpoint and checkpoint.suffix == ".onnx":
+        model = Segmenter(str(checkpoint), conf_threshold=confidence)
+        backend = "onnx-cpu"
+    elif checkpoint:
+        from segmentation_model import load_model
+        model = load_model(checkpoint, device)
+        backend = "maskrcnn"
+    else:
+        model = None
+    state = {"frame": None, "model_error": None, "inference_ms": None}
     state_lock = threading.Lock()
 
     if model is not None:
         def infer():
+            previous_timestamp = 0.0
             while camera.running:
-                raw = camera.latest()
+                raw, timestamp = camera.latest_with_timestamp()
                 if raw is None:
                     with state_lock:
                         state["frame"] = None
                     time.sleep(0.1)
                     continue
+                if timestamp == previous_timestamp:
+                    time.sleep(0.02)
+                    continue
+                previous_timestamp = timestamp
                 try:
-                    results = predict_frame(model, raw, device, confidence)
+                    started = time.perf_counter()
+                    if backend == "onnx-cpu":
+                        predictions = model.segment(cv2.cvtColor(raw, cv2.COLOR_BGR2RGB))
+                        results = [(item.cls, item.conf, item.mask) for item in predictions]
+                    else:
+                        from segmentation_model import predict_frame
+                        results = [(CLASS_NAMES[class_id - 1], score, mask)
+                                   for class_id, score, mask in predict_frame(model, raw, device, confidence)]
                     painted = draw_masks(raw, results)
                     with state_lock:
                         state["frame"] = painted
                         state["model_error"] = None
+                        state["inference_ms"] = round((time.perf_counter() - started) * 1000, 1)
                 except Exception as error:
                     with state_lock:
                         state["model_error"] = str(error)
@@ -112,17 +157,21 @@ def serve(camera, captures: Path, port: int, checkpoint: Path | None, device: st
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path == "/":
+            path = urlsplit(self.path).path
+            if path == "/":
                 self.send_bytes(HTTPStatus.OK, PAGE.encode(), "text/html; charset=utf-8")
-            elif self.path == "/health":
+            elif path == "/health":
                 with state_lock:
                     error = state["model_error"]
+                    inference_ms = state["inference_ms"]
                 frame = camera.latest()
                 self.send_json(HTTPStatus.OK, {"camera_ready": frame is not None,
                                                "model_ready": model is not None and error is None,
+                                               "backend": backend,
+                                               "inference_ms": inference_ms,
                                                "focus_score": focus_score(frame) if frame is not None else None,
                                                "model_error": error})
-            elif self.path == "/stream":
+            elif path == "/stream":
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
                 self.send_header("Cache-Control", "no-store")
@@ -162,7 +211,7 @@ def serve(camera, captures: Path, port: int, checkpoint: Path | None, device: st
                 if length > 4096:
                     raise ValueError("Request too large")
                 label = json.loads(self.rfile.read(length))["label"]
-                if label not in CLASS_NAMES[1:] + ("empty",):
+                if label not in CLASS_NAMES + ("empty",):
                     raise ValueError("Unknown label")
                 frame = camera.latest()
                 if frame is None:
