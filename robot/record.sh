@@ -189,14 +189,17 @@ fi
 if [ -n "${REPLAY_EP:-}" ]; then
   # Open loop: the object and bin must sit where they were in this episode. Each episode starts and
   # ends at the rest pose; max_relative_target eases the arm in if it starts somewhere else.
-  echo "Replaying episode $REPLAY_EP of $REPO (max 8 deg per joint per step). Keep a hand near the follower's power plug."
+  # Shoulder lift and elbow carry the arm's weight and trail the leader by up to ~15 deg while
+  # recording (which has no cap). An 8 deg cap shrinks the error their servos push against, so
+  # they sag and drag the arm down; give them 30.
+  echo "Replaying episode $REPLAY_EP of $REPO (max 8 deg per step, 30 for shoulder lift and elbow). Keep a hand near the follower's power plug."
   set +e
   # STOP sends Ctrl-C. Without a trap bash dies with lerobot-replay and skips relax_follower, which
   # matters most when STOP lands mid-grasp with the gripper squeezing.
   trap 'echo "STOP: ending the replay"' INT
   lerobot-replay \
     --robot.type=so101_follower --robot.port="$FOLLOWER_PORT" --robot.id=my_follower \
-    --robot.max_relative_target=8 \
+    --robot.max_relative_target="{shoulder_pan: 8, shoulder_lift: 30, elbow_flex: 30, wrist_flex: 8, wrist_roll: 8, gripper: 8}" \
     --dataset.repo_id="$REPO" --dataset.root="$ROOT" --dataset.episode="$REPLAY_EP" \
     --play_sounds=false
   trap - INT
