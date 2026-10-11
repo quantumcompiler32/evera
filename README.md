@@ -17,7 +17,8 @@ See [the architecture](docs/ARCHITECTURE.md) and [the SO-101 setup guide](docs/S
 
 [`robot/`](robot/README.md) records SO-101 teleoperation datasets on the NucBox through a browser
 dashboard (Limelight top camera + wrist camera). [`training/`](training/README.md) trains an ACT
-policy on AMD Radeon Cloud. Current state and next steps are in [docs/HANDOFF.md](docs/HANDOFF.md).
+policy on AMD Radeon Cloud, and [`pi05/`](pi05/README.md) fine-tunes and runs the π₀.₅ VLA policy
+on the NucBox. Current state and next steps are in [docs/HANDOFF.md](docs/HANDOFF.md).
 
 ## evera iPad app
 
