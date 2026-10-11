@@ -12,3 +12,5 @@ Git. A separate held-out Limelight test set is still needed before any reliable
 accuracy or autonomous arm claim.
 
 See [the architecture](docs/ARCHITECTURE.md) and [the SO-101 setup guide](docs/SETUP.md).
+
+See [pi05/](pi05/README.md) for fine-tuning and running the π₀.₅ VLA policy on the SO-101.
