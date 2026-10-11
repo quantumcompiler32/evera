@@ -1,15 +1,14 @@
 # Evera workshop vision
 
-This repository contains source for a workshop object detector and an SO-101
-setup script. The current vision model detects Raspberry Pi, Arduino, and
-soldering iron in camera images and draws bounding boxes in a local browser
-preview. See [the vision guide](vision/README.md) for camera, labeling, training,
-and Limelight 3A setup.
+This repository contains a Limelight 3A live view, a CNN instance segmentation
+pipeline, and an SO-101 setup script. The vision model is intended to produce
+separate masks for Raspberry Pi boards, Arduino boards, Pinecil soldering irons,
+and individual wires. Training and inference run on an AMD NucBox; the camera
+feeds images to that computer over USB networking.
 
-The detector is fine-tuned from pretrained YOLO26n weights on the AMD NucBox.
-Captured images, labels, and trained weights are local artifacts and are not
-included in this repository. The current training set is too small for a
-reliable accuracy claim or autonomous arm control.
+See [the vision guide](vision/README.md) for the current dataset, camera setup,
+training commands, and accuracy limits. Images and weights are kept out of
+Git. A separate held-out Limelight test set is still needed before any reliable
+accuracy or autonomous arm claim.
 
-See [the architecture](docs/ARCHITECTURE.md) for the vision pipeline and
-[the setup guide](docs/SETUP.md) for the separate LeRobot environment.
+See [the architecture](docs/ARCHITECTURE.md) and [the SO-101 setup guide](docs/SETUP.md).
