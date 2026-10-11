@@ -14,6 +14,7 @@ const P = {
   dock: '<path d="M24 6l16 8v20l-16 8-16-8V14z"/><path d="M8 14l16 8 16-8"/><path d="M24 22v20"/><path d="M16 10l16 8"/>',
   mic: '<rect x="18" y="6" width="12" height="22" rx="6"/><path d="M11 23a13 13 0 0 0 26 0"/><path d="M24 36v6"/><path d="M18 42h12"/>',
   gear: '<circle cx="24" cy="24" r="6"/><path d="M24 4v6M24 38v6M4 24h6M38 24h6M9.9 9.9l4.2 4.2M33.9 33.9l4.2 4.2M9.9 38.1l4.2-4.2M33.9 14.1l4.2-4.2"/>',
+  gamepad: '<path d="M14 15h20a9 9 0 0 1 9 9v1a8 8 0 0 1-14 5l-2-2h-6l-2 2a8 8 0 0 1-14-5v-1a9 9 0 0 1 9-9z"/><path d="M15 20v8M11 24h8"/><circle cx="31" cy="22" r="1.6"/><circle cx="35" cy="26" r="1.6"/>',
   stop: '<rect x="13" y="13" width="22" height="22" rx="3"/>',
   close: '<path d="M12 12l24 24M36 12L12 36"/>',
   play: '<path d="M17 11l20 13-20 13z"/>',

@@ -1,9 +1,59 @@
-// Voice: hold-to-talk (MediaRecorder → OpenAI transcription), "evera" wake word
+// Voice: hold-to-talk (raw mic samples → WAV → ElevenLabs/OpenAI transcription), "evera" wake word
 // (webkitSpeechRecognition), and speech out (ElevenLabs, falling back to the browser voice).
 // The analyser feeds the waveform for both the mic and EVERA's voice.
 
-const WAKE = /\b(evera|ever a|evra|avera|a vera|ev era|eve era|everra|evarra|severa|e vera|vera)\b/i;
+// "evera" isn't a dictionary word, so recognisers spell it many ways ("a Vera", "Avera", "Elvira"...).
+// Match it loosely: any 1-3 adjacent words that, joined, are within edit distance 2 of "evera".
+const WAKE_ALIASES = new Set(['evera', 'avera', 'evara', 'evra', 'elvira', 'ebira', 'abera', 'avira', 'efera', 'everra', 'evarra', 'severa', 'vera', 'heyvera', 'ivera', 'iveral', 'hevera', 'aveda', 'evita', 'evera']);
+const NOT_WAKE = new Set(['every', 'ever', 'never', 'very', 'severe', 'several', 'everyone', 'everything', 'area', 'arena', 'opera', 'era', 'here', 'there', 'were', 'where', 'eva']);
+function lev(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+export function findWake(text) {
+  const words = text.toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    for (const n of [1, 2, 3]) {
+      if (i + n > words.length) break;
+      const cand = words.slice(i, i + n).join('');
+      if (n === 1 && NOT_WAKE.has(cand)) continue;
+      if (WAKE_ALIASES.has(cand) || (cand.length >= 4 && cand.length <= 8 && lev(cand, 'evera') <= 2 && !NOT_WAKE.has(cand))) {
+        return { rest: words.slice(i + n).join(' ') };
+      }
+    }
+  }
+  return null;
+}
 const VOCAB = 'evera, soldering iron, heat-set insert, screwdriver, multimeter, measuring tape, allen key, glue gun, pliers, tweezers, flush cutters, calipers, helping hand, return all';
+
+// Float32 sample chunks -> 16 kHz mono 16-bit WAV blob.
+export function wav(chunks, inRate, outRate = 16000) {
+  const len = chunks.reduce((n, c) => n + c.length, 0);
+  const all = new Float32Array(len);
+  let o = 0;
+  for (const c of chunks) { all.set(c, o); o += c.length; }
+  const ratio = inRate / outRate;
+  const n = Math.floor(len / ratio);
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, outRate, true); v.setUint32(28, outRate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const a = Math.floor(i * ratio), b = Math.min(len, Math.floor((i + 1) * ratio));
+    let sum = 0;
+    for (let j = a; j < b; j++) sum += all[j];
+    const s = Math.max(-1, Math.min(1, sum / Math.max(1, b - a)));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
 
 export class Voice {
   constructor(getSettings, ev) {
@@ -68,14 +118,18 @@ export class Voice {
       this.resumeWake();
       return false;
     }
-    const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || '';
-    this.mime = type || 'audio/mp4';
-    this.chunks = [];
-    this.recorder = new MediaRecorder(this.stream, type ? { mimeType: type } : undefined);
-    this.recorder.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
-    this.recorder.start(250);
+    // Capture raw samples and build a WAV ourselves. Browser recorders differ (Safari's
+    // fragmented MP4 often arrives "corrupted"); a plain WAV works with every speech-to-text API.
+    if (this.ctx.state === 'suspended') await this.ctx.resume();
+    this.pcm = [];
     this.micSrc = this.ctx.createMediaStreamSource(this.stream);
     this.micSrc.connect(this.analyser);
+    this.proc = this.ctx.createScriptProcessor(4096, 1, 1);
+    this.proc.onaudioprocess = (e) => { if (this.recording) this.pcm.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+    this.mute = this.ctx.createGain();
+    this.mute.gain.value = 0; // keeps the processor running without playing the mic back
+    this.micSrc.connect(this.proc);
+    this.proc.connect(this.mute).connect(this.ctx.destination);
     this.recording = true;
     this.t0 = performance.now();
     this.ev.state('listening');
@@ -107,10 +161,9 @@ export class Voice {
     try { this.caption?.stop(); } catch { /* ignore */ }
     this.caption = null;
     const held = performance.now() - this.t0;
-    const done = new Promise((res) => (this.recorder.onstop = res));
-    this.recorder.stop();
-    await done;
     this.micSrc?.disconnect();
+    this.proc?.disconnect();
+    this.mute?.disconnect();
     this.stream.getTracks().forEach((t) => t.stop());
     this.resumeWake();
     if (held < 350) {
@@ -118,7 +171,7 @@ export class Voice {
       return null;
     }
     this.ev.state('thinking');
-    const blob = new Blob(this.chunks, { type: this.mime });
+    const blob = wav(this.pcm, this.ctx.sampleRate);
     try {
       return await this.transcribe(blob);
     } catch (e) {
@@ -130,8 +183,18 @@ export class Voice {
 
   async transcribe(blob) {
     const s = this.getSettings();
-    if (!s.openaiKey) throw new Error('Add your OpenAI key in Settings to use hold-to-talk.');
-    const ext = this.mime.includes('webm') ? 'webm' : 'mp4';
+    const ext = 'wav';
+    // OpenAI transcription when the brain is OpenAI, otherwise ElevenLabs Scribe.
+    if (!(s.llmProvider === 'openai' && s.openaiKey)) {
+      if (!s.elevenKey) throw new Error('Add an ElevenLabs or OpenAI key to use hold-to-talk.');
+      const fd = new FormData();
+      fd.append('file', blob, `speech.${ext}`);
+      fd.append('model_id', 'scribe_v1');
+      fd.append('language_code', 'en');
+      const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': s.elevenKey }, body: fd });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail?.message || `Speech-to-text error ${r.status}`);
+      return (await r.json()).text?.trim();
+    }
     const send = async (model) => {
       const fd = new FormData();
       fd.append('file', blob, `speech.${ext}`);
@@ -196,6 +259,7 @@ export class Voice {
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const res = e.results[i];
       const text = res[0].transcript.trim();
+      this.ev.heard?.(text);
       if (this.awaitCmd) {
         this.ev.interim(text);
         if (res.isFinal && text) {
@@ -205,9 +269,9 @@ export class Voice {
         }
         continue;
       }
-      const m = text.match(WAKE);
+      const m = findWake(text);
       if (!m) continue;
-      const rest = text.slice(m.index + m[0].length).replace(/^[\s,.!?]+/, '');
+      const rest = m.rest;
       if (!this.woke) {
         this.woke = true;
         this.ev.state('listening');
@@ -216,7 +280,7 @@ export class Voice {
       this.ev.interim(rest || '…');
       if (res.isFinal) {
         this.woke = false;
-        if (rest.split(' ').length >= 2) this.ev.command(rest);
+        if (rest.length >= 3) this.ev.command(rest);
         else {
           this.awaitCmd = setTimeout(() => {
             this.awaitCmd = null;

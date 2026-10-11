@@ -3,7 +3,7 @@ import { TOOLS, LEFT, RIGHT, toolById } from './actions.js';
 import { icon } from './icons.js';
 import { Arm3D } from './arm3d.js';
 import { Backend } from './api.js';
-import { Brain } from './brain.js';
+import { Brain, RELEASE } from './brain.js';
 import { Voice } from './voice.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -14,12 +14,18 @@ const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart
 
 // ------------------------------------------------------------------ settings
 const DEFAULTS = {
-  openaiKey: '', openaiModel: 'gpt-4.1-mini', sttModel: 'gpt-4o-mini-transcribe',
+  llmProvider: 'openai', openaiKey: '', openaiModel: '', sttModel: 'gpt-4o-mini-transcribe',
   elevenKey: '', elevenVoice: 'JBFqnCBsd6RMkjVDRZzb', elevenModel: 'eleven_flash_v2_5',
   link: 'auto', backend: '', wake: true,
 };
 let settings = { ...DEFAULTS };
 try { settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('evera.settings') || '{}') }; } catch { /* private mode */ }
+// keys.local.js (gitignored) pre-fills the keys so the app works with no Settings step.
+try {
+  const k = (await import('./keys.local.js')).default || {};
+  const map = { llmProvider: k.llmProvider, openaiKey: k.llmKey, openaiModel: k.llmModel, elevenKey: k.elevenKey, elevenVoice: k.elevenVoice, link: k.link, backend: k.dashboard };
+  for (const [f, v] of Object.entries(map)) if (v) settings[f] = v;
+} catch { /* no local keys file */ }
 const saveSettings = () => { try { localStorage.setItem('evera.settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const getSettings = () => settings;
 
@@ -49,6 +55,7 @@ const brain = new Brain(getSettings);
 const voice = new Voice(getSettings, {
   state: setVoiceState,
   interim: (t) => setVText(t),
+  heard: (t) => showHeard(t),
   command: (t) => handleUtterance(t),
   error: (m) => toast(m, 'warn'),
 });
@@ -103,14 +110,14 @@ function selectTool(id, { toggle = false } = {}) {
   for (const t of Object.values(tools)) t.el.classList.toggle('sel', t.id === id);
   toolsEl.classList.add('has-sel');
   stage.classList.add('has-sel');
-  if (!S.run) arm.setDisplay(id); // swap the centre to this tool's 3D model
+  if (!S.run && !S.teleop) arm.setDisplay(id); // swap the centre to this tool's 3D model
   buildModes();
 }
 
 // After a run, bring the selected tool's model back once the arm has folded away.
 function showSelectedSoon(ms = 2400) {
   clearTimeout(S.showT);
-  S.showT = setTimeout(() => { if (S.sel && !S.run) arm.setDisplay(S.sel); }, ms);
+  S.showT = setTimeout(() => { if (S.sel && !S.run && !S.teleop) arm.setDisplay(S.sel); }, ms);
 }
 
 function deselect() {
@@ -142,7 +149,7 @@ function buildModes() {
 }
 
 function updateModesVisibility() {
-  const show = S.sel && !(S.run && S.run.tool.id === S.sel);
+  const show = S.sel && !S.teleop && !S.teleopPending && !(S.run && S.run.tool.id === S.sel);
   modesEl.classList.toggle('show', !!show);
 }
 
@@ -222,15 +229,73 @@ async function estop() {
   setTimeout(() => { if (arm.mode === 'frozen') arm.home(); }, 900);
 }
 
-function gotIt() {
-  // Future: run a "release gripper" action here once one is trained.
+// Teleop: the dashboard's practice mode (the leader arm drives the follower; nothing recorded).
+async function startTeleop({ say = true } = {}) {
+  voice.unlock();
+  if (S.teleop) return say && evera('Teleop is already on. Move the leader arm.');
+  // Never interrupt something evera didn't start (e.g. a teammate recording on the dashboard).
+  if (backend.real?.running && !S.run) {
+    sysMsg(`Dashboard busy: ${backend.real.message || backend.real.state}`);
+    return evera('The arm is busy on the dashboard right now. Stop that session there first.');
+  }
+  if (S.run) {
+    S.run.stopped = true;
+    await backend.stop().catch(() => {});
+    arm.home();
+    await backend.waitIdle();
+  }
+  let res;
+  try { res = await backend.teleop(); } catch (e) { res = e.message || 'network error'; }
+  if (res !== 'started') {
+    sysMsg(`Teleop didn't start: ${res}`);
+    return evera(res === 'camera down' ? "A camera seems to be down, so the dashboard won't start teleop." : `Teleop didn't start: ${res}.`);
+  }
+  S.teleopPending = true;
+  document.body.classList.add('teleop');
+  updateModesVisibility();
+  if (say) evera('Teleop engaged. Move the leader arm and the follower will copy you.');
+}
+
+async function stopTeleop({ say = true } = {}) {
+  if (!S.teleop && !S.teleopPending) return say && evera('Teleop is not running.');
+  try { await backend.stop(); } catch { /* offline */ }
+  if (say) evera('Teleop ended. Arm returning to rest.');
+}
+
+$('#teleop').addEventListener('click', () => (S.teleop || S.teleopPending ? stopTeleop() : startTeleop()));
+
+// "Got it" / "drop it": open the gripper and send the arm back to its start position.
+// (Stopping the policy makes LeRobot return the arm to its start pose.)
+async function release({ say = true } = {}) {
   S.awaitGotIt = null;
+  renderRun();
+  const r = S.run;
+  if (r && r.phase !== 'saving') {
+    r.stopped = true;
+    r.released = true;
+    arm.release();
+    if (say) evera('Releasing it now.');
+    try { await backend.stop(); } catch { /* offline */ }
+  } else if (say) evera(r ? 'Already on its way back.' : 'Nothing in hand at the moment.');
 }
 
 function onStatus(s) {
   S.status = s;
   renderConn(s);
   renderCams(s);
+  const tele = s.state === 'practice';
+  if (tele && !S.teleop) {
+    S.teleop = { t0: performance.now() };
+    S.teleopPending = false;
+    arm.setDisplay(null);
+    arm.teleop();
+  } else if (!tele && S.teleop && s.state !== 'offline') {
+    S.teleop = null;
+    arm.home();
+    if (S.sel) showSelectedSoon();
+  }
+  if (S.teleopPending && !['starting', 'practice'].includes(s.state) && !s.running) S.teleopPending = false;
+  document.body.classList.toggle('teleop', !!S.teleop || !!S.teleopPending);
   const r = S.run;
   if (s.state === 'starting') {
     if (r && r.phase === 'launch') r.phase = 'starting';
@@ -247,7 +312,7 @@ function onStatus(s) {
   } else if (s.state === 'saving') {
     if (r && r.phase !== 'saving' && r.phase !== 'launch') {
       r.phase = 'saving';
-      arm.home();
+      if (arm.mode !== 'home') arm.home();
       arm.setHot(false);
       document.body.classList.remove('hot');
     }
@@ -271,27 +336,24 @@ function finishRun(r) {
   if (arm.mode === 'run' || arm.mode === 'frozen') arm.home();
   else if (arm.mode !== 'home') arm.idle();
   if (S.sel) showSelectedSoon();
-  if (!r.stopped && reachedRobot && r.mode.motion === 'handover') {
-    S.awaitGotIt = r.tool.id;
-    evera('Here you go. Say “got it” when you have it.');
-  } else if (!r.stopped && reachedRobot) {
-    evera(r.mode.motion === 'press' ? 'Insert seated.' : 'Done.');
-  }
+  S.awaitGotIt = null;
+  if (!r.stopped && reachedRobot) evera(r.mode.motion === 'press' ? 'Insert seated.' : r.offered ? 'Taking it back. Arm is at rest.' : 'Done.');
 }
 
 function renderRun() {
   const r = S.run;
-  document.body.classList.toggle('running', !!r);
+  document.body.classList.toggle('running', !!r || !!S.teleop);
+  document.body.classList.toggle('offering', !!(r && S.awaitGotIt));
   for (const t of Object.values(tools)) t.el.classList.toggle('runningtool', !!r && t.id === r.tool.id);
 }
 
 // ------------------------------------------------------------------ header / cams
 function renderConn(s) {
   const c = $('#conn');
-  c.classList.toggle('ok', s.connected);
-  c.classList.toggle('sim', s.sim);
+  c.classList.toggle('ok', s.connected || !!s.robot);
+  c.classList.toggle('sim', s.sim && !s.robot);
   c.classList.toggle('off', !s.connected && !s.sim);
-  const txt = s.connected ? 'Connected' : s.sim ? 'Simulator' : 'Offline';
+  const txt = s.robot && s.sim ? 'Connected · sim actions' : s.connected ? 'Connected' : s.sim ? 'Simulator' : 'Offline';
   if ($('#conntext').dataset.v !== txt) scramble($('#conntext'), txt);
 }
 
@@ -306,17 +368,18 @@ function renderCams(s) {
       st.url = url;
       st.ok = false;
       if (url) {
-        img.onload = () => (st.ok = true);
         img.onerror = () => { st.ok = false; setTimeout(() => { if (st.url === url) img.src = `${url}?t=${Date.now()}`; }, 3000); };
         img.src = url;
       } else img.removeAttribute('src');
     }
-    const age = s.cams?.[name];
+    // MJPEG <img> streams don't reliably fire "load": a decoded frame (naturalWidth) means it's live.
+    if (url && img.naturalWidth > 0) st.ok = true;
+    const age = s.connected ? s.cams?.[name] : null;
     const live = !!url && st.ok && (age == null || age < 3);
     feed.classList.toggle('ok', live);
     $(`#live-${name}`).classList.toggle('off', !live);
-    $(`#live-${name}`).textContent = live ? 'LIVE' : s.sim ? 'SIM' : 'OFFLINE';
-    feed.querySelector('.nosig').textContent = s.sim ? 'Simulator · no camera' : url && age > 3 ? 'Signal lost' : 'No signal';
+    $(`#live-${name}`).textContent = live ? 'LIVE' : 'OFFLINE';
+    feed.querySelector('.nosig').textContent = url && age > 3 ? 'Signal lost' : 'Connecting to camera…';
   }
 }
 
@@ -361,8 +424,8 @@ const sysMsg = (t) => addMsg('sys', t);
 
 function armContext() {
   const r = S.run;
-  let s = r ? `running "${r.mode.label}" with the ${r.tool.name} (${r.phase})` : 'idle';
-  if (!r && S.sel) s += `, ${toolById(S.sel).name} selected on screen`;
+  let s = S.teleop ? 'in teleop (the user is driving it with the leader arm)' : r ? `running "${r.mode.label}" with the ${r.tool.name} (${r.phase})` : 'idle';
+  if (!r && !S.teleop && S.sel) s += `, ${toolById(S.sel).name} selected on screen`;
   if (S.awaitGotIt) s += `, waiting for the user to take the ${toolById(S.awaitGotIt).name}`;
   if (S.status && !S.status.connected) s += S.status.sim ? ' (simulator mode)' : ' (robot offline)';
   return s;
@@ -374,26 +437,54 @@ async function handleUtterance(text) {
   addMsg('you', text);
   setVText(text, false);
   if (/\b(stop|halt|freeze|abort|emergency)\b/i.test(text)) return estop();
+  if (RELEASE.test(text.toLowerCase())) return release();
   setVoiceState('thinking');
   let out;
   try {
     out = await brain.think(text, armContext());
+    if (S.brainErr) { S.brainErr = null; $('#brainbadge').classList.remove('on'); }
   } catch (e) {
-    toast(e.message, 'warn');
+    if (e.message !== S.brainErr) toast(`Brain offline, using keywords: ${e.message}`, 'warn');
+    S.brainErr = e.message;
+    $('#brainbadge').classList.add('on');
+    $('#brainbadge').title = e.message;
     out = brain.fallback(text);
   }
+  let research = null;
   for (const c of out.calls) {
-    if (c.name === 'run_action') {
+    if (c.name === 'research') research = c.args;
+    else if (c.name === 'start_teleop') startTeleop({ say: !out.say });
+    else if (c.name === 'stop_teleop') stopTeleop({ say: !out.say });
+    else if (c.name === 'run_action') {
       const tool = toolById(c.args.tool_id);
       if (!tool) continue;
       const mode = tool.modes.find((m) => m.id === c.args.mode_id) || tool.modes[0];
       runMode(tool, mode, { say: false });
     } else if (c.name === 'stop_arm') {
       return estop();
-    } else if (c.name === 'got_it') gotIt();
+    } else if (c.name === 'got_it') {
+      release({ say: !out.say });
+    }
   }
+  if (research) return doResearch(research.query || text, out.say || research.say);
   if (out.say) evera(out.say);
   else setVoiceState('idle');
+}
+
+// Web research: say a short line, search, then answer (full text in the chat, spoken too).
+async function doResearch(query, opener) {
+  evera(opener || 'Let me look into that.');
+  S.researching = true;
+  setVoiceState('researching');
+  try {
+    const answer = await brain.research(query);
+    S.researching = false;
+    evera(answer);
+  } catch (e) {
+    S.researching = false;
+    toast(`Research failed: ${e.message}`, 'warn');
+    evera("I couldn't reach the web just now. Try me again in a moment.");
+  }
 }
 
 // ------------------------------------------------------------------ voice card
@@ -401,9 +492,11 @@ const VSTATE = {
   idle: ['Ready', () => (S.wakeOn ? 'Say “evera…” or hold the mic' : 'Hold the mic to talk'), 'Hold to talk'],
   listening: ['Listening', null, 'Release to send'],
   thinking: ['Thinking', null, 'One moment'],
+  researching: ['Researching', null, 'Searching the web…'],
   speaking: ['evera', null, 'Tap the mic to interrupt'],
 };
 function setVoiceState(st) {
+  if (st === 'idle' && S.researching) st = 'researching';
   S.voice = st;
   const vc = $('#vc');
   vc.className = `vc ${st}`;
@@ -415,6 +508,15 @@ function setVoiceState(st) {
   if (st === 'listening') setVText('…', false);
   if (ph) setVText(ph(), true);
 }
+// Show what the wake-word listener hears, so you can tell it's working.
+function showHeard(t) {
+  if (S.voice !== 'idle' || !t) return;
+  const h = $('#vhint');
+  h.textContent = `Heard: “${t.slice(-48)}”`;
+  clearTimeout(S.heardT);
+  S.heardT = setTimeout(() => { if (S.voice === 'idle') h.textContent = VSTATE.idle[2]; }, 2500);
+}
+
 function setVText(t, placeholder = false) {
   const el = $('#vtext');
   el.textContent = t;
@@ -431,7 +533,7 @@ function setVText(t, placeholder = false) {
     if (S.voice === 'speaking') voice.stopSpeaking();
     holding = true;
     mic.classList.add('held');
-    mic.setPointerCapture?.(e.pointerId);
+    if (e.pointerType) try { mic.setPointerCapture(e.pointerId); } catch { /* not a real pointer */ }
     const ok = await voice.startHold();
     if (!ok) { holding = false; mic.classList.remove('held'); }
     else if (!holding) up();
@@ -451,10 +553,18 @@ function setVText(t, placeholder = false) {
   // Desktop: hold Space to talk, Esc = stop.
   window.addEventListener('keydown', (e) => {
     if (e.target.closest('input,select')) return;
-    if (e.code === 'Space' && !e.repeat) down({ preventDefault: () => e.preventDefault(), pointerId: 0 });
+    if (e.code === 'Space') {
+      e.preventDefault(); // don't "click" whatever button has focus
+      if (!e.repeat && !holding) down({ preventDefault() {} });
+    }
     if (e.code === 'Escape') estop();
   });
-  window.addEventListener('keyup', (e) => { if (e.code === 'Space') { holding = false; up(); } });
+  window.addEventListener('keyup', (e) => {
+    if (e.code !== 'Space' || e.target.closest('input,select')) return;
+    e.preventDefault();
+    holding = false;
+    up();
+  });
 }
 
 function setWake(on) {
@@ -595,12 +705,22 @@ arm.onFrame = () => {
   const r = S.run;
   const label = $('#armlabel');
   let lab = S.sel && !S.run ? toolById(S.sel).name : 'SO-101 · Follower', pill = '';
-  if (r) {
+  if (S.teleop) {
+    const el = (now - S.teleop.t0) / 1000;
+    lab = `Teleop · ${mmss(el)}`;
+    pill = `Teleop · leader arm · ${mmss(el)}`;
+  } else if (r) {
     const name = `${r.tool.name} · ${r.mode.label}`;
     if (r.phase === 'robot') {
       const el = (now - r.t0) / 1000;
       lab = `${r.mode.label} · ${mmss(el)}`;
       pill = `${name} · ${mmss(el)}`;
+      if (r.mode.motion === 'handover' && !r.offered && !r.stopped && el > 5.8) {
+        r.offered = true;
+        S.awaitGotIt = r.tool.id;
+        renderRun();
+        evera('Here you go. Say “got it” or “drop it” when you have it.');
+      }
       const circ = tools[r.tool.id]?.el.querySelector('.prog circle');
       if (circ) circ.style.strokeDashoffset = String(100 - clamp((el / r.mode.secs) * 100, 0, 100));
     } else if (r.phase === 'saving') { lab = 'Returning to rest'; pill = `${name} · returning`; }
@@ -719,7 +839,7 @@ $('#lightbox').addEventListener('click', () => {
 });
 
 // ------------------------------------------------------------------ settings
-const FIELDS = ['openaiKey', 'openaiModel', 'sttModel', 'elevenKey', 'elevenVoice', 'elevenModel', 'link', 'backend'];
+const FIELDS = ['llmProvider', 'openaiKey', 'openaiModel', 'sttModel', 'elevenKey', 'elevenVoice', 'elevenModel', 'link', 'backend'];
 function openSettings() {
   for (const f of FIELDS) $(`#s-${f}`).value = settings[f] ?? '';
   $('#s-wake').checked = !!settings.wake;
@@ -734,6 +854,7 @@ function closeSettings() {
 for (const f of FIELDS) $(`#s-${f}`).addEventListener('input', (e) => { settings[f] = e.target.value.trim(); saveSettings(); renderDiag(); });
 $('#s-wake').addEventListener('change', (e) => setWake(e.target.checked));
 $('#gear').innerHTML = icon('gear', 26, 1.6);
+$('#teleop').insertAdjacentHTML('afterbegin', icon('gamepad', 22, 1.8));
 $('#sh-close').innerHTML = icon('close', 22, 1.8);
 $('#gear').addEventListener('click', () => { voice.unlock(); openSettings(); });
 $('#sh-close').addEventListener('click', closeSettings);
@@ -745,7 +866,7 @@ function renderDiag() {
   $('#s-diag').innerHTML = [
     `HTTPS (needed for the mic): ${ok(window.isSecureContext)}`,
     `Wake word supported: ${ok(voice.wakeSupported)}`,
-    `OpenAI key: ${ok(!!settings.openaiKey)} · ElevenLabs key: ${ok(!!settings.elevenKey)}`,
+    `${{ groq: 'Groq', xai: 'xAI' }[settings.llmProvider] || 'OpenAI'} key: ${ok(!!settings.openaiKey)} · ElevenLabs key: ${ok(!!settings.elevenKey)}`,
     `Robot: <b>${S.status ? (S.status.connected ? 'connected' : S.status.sim ? 'simulator' : 'offline') : '…'}</b>`,
   ].join('<br>');
 }
@@ -753,6 +874,7 @@ function renderDiag() {
 // ------------------------------------------------------------------ stop buttons
 $('#hstop').addEventListener('click', () => estop());
 $('#bigstop').addEventListener('click', () => estop());
+$('#release').addEventListener('click', () => release());
 
 // ------------------------------------------------------------------ boot sequence
 const bootLines = {};
@@ -777,8 +899,8 @@ function boot() {
     setTimeout(() => $('#boot').remove(), 900);
     S.booted = true;
     setTimeout(() => {
-      const hasKeys = settings.openaiKey && settings.elevenKey;
-      evera(hasKeys ? 'Good evening. Bench is online. What do you need?' : 'Bench online. Add your OpenAI and ElevenLabs keys in settings to talk to me.', { speak: false });
+      const hasKeys = settings.openaiKey || settings.elevenKey;
+      evera(hasKeys ? 'Good evening. Bench is online. What do you need?' : 'Bench online. Add your API keys in settings to talk to me.', { speak: false });
     }, 700);
   };
   $('#boot').addEventListener('click', () => { voice.unlock(); finish(); });
@@ -796,7 +918,7 @@ function boot() {
       }
     }, 150);
   });
-  bootLine('voice', `${settings.elevenKey ? 'ElevenLabs voice' : 'Browser voice'} · ${settings.openaiKey ? 'GPT brain' : 'offline brain'}`, true);
+  bootLine('voice', `${settings.elevenKey ? 'ElevenLabs voice' : 'Browser voice'} · ${settings.openaiKey ? ({ groq: 'Groq brain', xai: 'Grok brain' }[settings.llmProvider] || 'GPT brain') : 'offline brain'}`, true);
   Promise.all([min, Promise.race([Promise.all([armReady, robot]), new Promise((r) => setTimeout(r, 7000))])]).then(() => setTimeout(finish, 350));
 }
 
@@ -813,6 +935,7 @@ armReady.then(() => {
   }
   if (DBG.has('sel')) setTimeout(() => { selectTool(DBG.get('sel')); if (DBG.has('snap')) arm.snap(); }, 300);
   if (DBG.has('say')) setTimeout(() => handleUtterance(DBG.get('say')), 500);
+  if (DBG.has('then')) setTimeout(() => handleUtterance(DBG.get('then')), +(DBG.get('thenAt') || 10000));
   if (DBG.has('stopAt')) setTimeout(() => handleUtterance('stop'), +DBG.get('stopAt'));
   if (DBG.has('run')) {
     const [tid, mid] = DBG.get('run').split('/');
@@ -827,6 +950,7 @@ layoutTools();
 new ResizeObserver(() => layoutTools()).observe(stage);
 setVoiceState('idle');
 setWake(settings.wake !== false);
+if (!settings.openaiKey) $('#brainbadge').classList.add('on');
 backend.start();
 boot();
 window.addEventListener('pointerdown', () => {

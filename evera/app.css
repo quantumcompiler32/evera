@@ -48,7 +48,7 @@ body.v-speaking .logo-arc { animation-duration: 2.2s; }
 .word { font-size: 30px; font-weight: 500; letter-spacing: 0.05em; color: #f2f6fa; }
 
 .hright { display: flex; align-items: center; gap: 14px; }
-.conn { display: flex; align-items: center; gap: 10px; font-size: 16px; color: #d7dee7; min-width: 118px; justify-content: flex-end; }
+.conn { display: flex; align-items: center; gap: 10px; font-size: 15px; color: #d7dee7; min-width: 118px; justify-content: flex-end; }
 .conn .dot, .rp-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); box-shadow: 0 0 0 0 rgba(43, 212, 111, 0.6); }
 .conn.ok .dot { background: var(--green); animation: ping 2.4s ease-out infinite; }
 .conn.sim .dot { background: var(--amber); }
@@ -163,6 +163,36 @@ body.running .armlabel { color: var(--acc); font-weight: 600; }
 .bigstop::before { content: ''; position: absolute; inset: -6px; border-radius: inherit; border: 2px solid rgba(255, 75, 92, 0.5); animation: ring 1.6s ease-out infinite; }
 body.running .bigstop { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
 .bigstop:active { transform: translate(-50%, 0) scale(0.95); }
+.telebtn {
+  display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px 0 12px; border-radius: 999px;
+  border: 1.5px solid rgba(127, 211, 247, 0.45); background: rgba(127, 211, 247, 0.06); color: var(--cyan); font-weight: 700; font-size: 14px;
+  transition: background 0.2s, color 0.2s, transform 0.15s, box-shadow 0.3s;
+}
+.telebtn .tl-off { display: none; }
+body.teleop .telebtn { background: var(--cyan); color: #07111d; border-color: var(--cyan); box-shadow: 0 0 22px rgba(127, 211, 247, 0.5); }
+body.teleop .telebtn .tl-on { display: none; }
+body.teleop .telebtn .tl-off { display: inline; }
+.telebtn:active { transform: scale(0.94); }
+.telebanner {
+  position: absolute; left: 50%; top: 22px; display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-radius: 999px;
+  border: 1px solid rgba(127, 211, 247, 0.5); background: rgba(10, 24, 36, 0.85); color: #d8eef8; font-size: 14.5px; white-space: nowrap;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 0 30px rgba(127, 211, 247, 0.2);
+  opacity: 0; pointer-events: none; transform: translate(-50%, -12px); transition: opacity 0.3s, transform 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.35);
+}
+.telebanner b { color: var(--cyan); }
+.tb-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--cyan); animation: ping 1.2s ease-out infinite; }
+body.teleop .telebanner { opacity: 1; transform: translate(-50%, 0); }
+body.teleop #stage::before { background: radial-gradient(circle, rgba(127, 211, 247, 0.2), transparent 62%); }
+.releasebtn {
+  position: absolute; left: 50%; bottom: 96px; height: 52px; padding: 0 26px; border-radius: 999px; border: 1.5px solid var(--acc);
+  background: color-mix(in srgb, var(--acc) 16%, rgba(8, 12, 19, 0.85)); color: var(--acc); font-weight: 700; font-size: 16px; letter-spacing: 0.04em;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); opacity: 0; pointer-events: none; transform: translate(-50%, 20px) scale(0.92);
+  transition: opacity 0.3s, transform 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.35); box-shadow: 0 0 30px color-mix(in srgb, var(--acc) 35%, transparent);
+}
+body.offering .releasebtn { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); animation: halo 2.2s ease-in-out infinite; }
+.releasebtn:active { transform: translate(-50%, 0) scale(0.95); }
+.brainbadge { display: none; height: 22px; padding: 0 8px; border-radius: 999px; border: 1px solid rgba(255, 166, 48, 0.5); color: #ffc98a; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; align-items: center; }
+.brainbadge.on { display: inline-flex; }
 .armload { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 14px; color: var(--dim); font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; transition: opacity 0.5s; pointer-events: none; }
 .al-ring { width: 54px; height: 54px; border-radius: 50%; border: 2px solid rgba(127, 211, 247, 0.15); border-top-color: var(--cyan); animation: spin 0.9s linear infinite; }
 .armload.done { opacity: 0; }
@@ -206,7 +236,9 @@ aside { border-left: 1px solid var(--line); padding: 16px 20px 18px; display: fl
   transition: border-color 0.3s, box-shadow 0.4s;
 }
 .vc::before { content: ''; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 30%, rgba(127, 211, 247, 0.12) 50%, transparent 70%); transform: translateX(-100%); pointer-events: none; }
-.vc.thinking::before { animation: sweep 1.3s ease-in-out infinite; }
+.vc.thinking::before, .vc.researching::before { animation: sweep 1.3s ease-in-out infinite; }
+.vc.researching { border-color: rgba(127, 211, 247, 0.6); }
+.vc.researching .vdot { background: var(--cyan); animation: blink 0.6s steps(2) infinite; }
 .vc.listening { border-color: rgba(127, 211, 247, 0.75); box-shadow: 0 0 0 4px rgba(127, 211, 247, 0.08), 0 14px 50px rgba(47, 166, 224, 0.35); }
 .vc.speaking { border-color: rgba(127, 211, 247, 0.55); }
 .vhead { display: flex; align-items: center; gap: 9px; font-size: 15px; color: #e6edf3; }

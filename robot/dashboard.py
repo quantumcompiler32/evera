@@ -174,6 +174,39 @@ def cam_ages():
     return {n: round(time.time() - t, 1) if t else None for n, t in last_frame_t.items()}
 
 
+def _child_signals():
+    # The dashboard is normally started with `setsid nohup ... &`, and a background job ignores
+    # Ctrl-C (SIGINT). That is inherited by everything it launches, so lerobot-teleoperate and
+    # lerobot-rollout never saw STOP. Give children the default handlers back.
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.signal(signal.SIGQUIT, signal.SIG_DFL)
+
+
+def _stop_process(p, grace):
+    """Ctrl-C first, so LeRobot can park the arm and disconnect cleanly; if the process is
+    still running after `grace` seconds, SIGTERM, then SIGKILL. STOP must always stop."""
+    try:
+        os.killpg(p.pid, signal.SIGINT)
+    except ProcessLookupError:
+        return
+
+    def watch():
+        for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 5)):
+            try:
+                p.wait(timeout=wait)
+                return
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                os.killpg(p.pid, sig)
+            except ProcessLookupError:
+                return
+            with lock:
+                S["log"].append(f"dashboard: process ignored the stop, sent {sig.name}")
+
+    threading.Thread(target=watch, daemon=True).start()
+
+
 def start_session(n, ep_time, task, args=None, mode="record"):
     global proc, master_fd
     if S["running"]:
@@ -187,7 +220,8 @@ def start_session(n, ep_time, task, args=None, mode="record"):
     for k in ("DISPLAY", "WAYLAND_DISPLAY"):  # force LeRobot's terminal (TTY) key listener
         env.pop(k, None)
     proc = subprocess.Popen(["bash", str(RECORD), *(args or ["session", str(n)])], stdin=slave_fd, stdout=slave_fd,
-                            stderr=slave_fd, env=env, start_new_session=True, close_fds=True)
+                            stderr=slave_fd, env=env, start_new_session=True, close_fds=True,
+                            preexec_fn=_child_signals)
     os.close(slave_fd)
     S.update(running=True, ep_time=ep_time, episode=None, mode=mode)
     S["log"].clear()
@@ -200,8 +234,8 @@ def send_key(k):
     if not S["running"] or master_fd is None:
         return "no session running"
     if S["mode"] in ("policy", "practice"):
-        if k == "q":  # lerobot-rollout / lerobot-teleoperate stop on SIGINT
-            os.killpg(proc.pid, signal.SIGINT)
+        if k == "q":  # lerobot-rollout / lerobot-teleoperate stop on SIGINT (escalates if ignored)
+            _stop_process(proc, 15 if S["mode"] == "policy" else 6)
             set_state("saving", "Stopping the policy, arm returning to its start pose..." if S["mode"] == "policy" else "Stopping practice...")
         return "sent"
     os.write(master_fd, k.encode())
