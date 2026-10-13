@@ -28,7 +28,8 @@ The current **provisional** live model is a YOLO11n-seg convolutional network
 trained on proposals and exported to ONNX. `onnx_segmenter.py` runs masks on the
 NucBox CPU using only NumPy, ONNX Runtime, and OpenCV. Its existing ONNX file
 still embeds four classes: `raspberry_pi`, `arduino`, `pinecil`, and `wire`.
-The user has since narrowed the next model to the first **three** classes.
+An earlier experiment narrowed proposals to the first **three** classes; the
+current append-only six-class target is described above.
 The live page filters out wire predictions and no longer offers wire capture;
 the ONNX file itself has not yet been retrained or validated for three classes.
 The earlier Mask R-CNN code remains as an experimental baseline; it has not
@@ -169,7 +170,7 @@ and browser delivery latency. Held-out accuracy is still needed. Ultralytics cod
 and trained models use AGPL-3.0 by default; check that license before
 distributing a derivative.
 
-## Next three-class dataset
+## Historical three-class proposal dataset
 
 `vision_training/propose_masks.py` saves raw `camera1` frames, individual
 prediction masks, previews, and a session manifest. It excludes contact sheets

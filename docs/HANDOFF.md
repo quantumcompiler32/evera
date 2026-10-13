@@ -1,4 +1,7 @@
-# Handoff: current state (Sun Oct 11, early morning)
+# Historical handoff: October 11, 2026 (early morning)
+
+> This is an operator snapshot, not a live status report. Paths, model availability,
+> dataset counts, and machine state require rechecking before use.
 
 Read this first if you're picking up on a new computer or in a new Claude session. Setup from scratch is in
 [SETUP.md](SETUP.md), and how the pieces connect is in [ARCHITECTURE.md](ARCHITECTURE.md).

@@ -8,7 +8,7 @@ cd ~/evera-vision
 ```
 
 The server binds to `127.0.0.1` on the NucBox. On the Mac, use
-`ssh -L 8766:127.0.0.1:8766 aup@169.233.72.19` and open
+`ssh -L 8766:127.0.0.1:8766 aup@<GMKTEC_IP>` and open
 `http://127.0.0.1:8766/`.
 
 ## Workflow
@@ -32,3 +32,13 @@ reliability claims or using detections for robot actions.
 
 The dashboard is intended for one local operator and has no login. Keep it
 bound to loopback and access it through SSH forwarding.
+
+## Experimental guided mode
+
+The guided workflow uses background subtraction and SAM to propose masks, then
+automatically trains a separate provisional checkpoint. These annotations have
+`auto_accepted: true` and `reviewed: false`; they are not human-reviewed truth.
+The dataset builder accepts them alongside reviewed annotations. Keep guided
+sessions in training, and use separately recorded, manually reviewed sessions
+for evaluation. Adding a dashboard class does not automatically extend the
+ONNX decoder's supported class orders in `vision/class_map.py`.

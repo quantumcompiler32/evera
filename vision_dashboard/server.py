@@ -92,7 +92,10 @@ def job_state() -> dict:
             else:
                 result["summary"] = "Capturing pictures · follow the move and hands-out cues"
         elif result["exit_code"] == 0:
-            result["summary"] = "New provisional model ready. The live model was not changed."
+            result["summary"] = ({
+                "capture": "Capture complete. Review the saved frames before training.",
+                "select": "Frame selection complete. Review and label the selected frames.",
+            }.get(result["kind"], "New provisional model ready. The live model was not changed."))
         else:
             lines = [line.strip() for line in content.splitlines() if line.strip()]
             result["summary"] = "Session stopped: " + (lines[-1][:180] if lines else "see details")
@@ -176,6 +179,7 @@ def build_dataset(run_name: str) -> tuple[Path, dict]:
     paths = {split: (base / f"{split}.txt").read_text().splitlines() if split != "test" else []
              for split in ("train", "val", "test")}
     counts = {name: 0 for name in names}
+    training_counts = {name: 0 for name in names}
     for session, split in roles.items():
         if split not in paths:
             continue
@@ -204,9 +208,11 @@ def build_dataset(run_name: str) -> tuple[Path, dict]:
                     raise ValueError(f"Polygon is outside image: {frame.name}")
                 lines.append(" ".join([str(names.index(name))] + [f"{v:.6f}" for v in coords]))
                 counts[name] += 1
+                if split == "train":
+                    training_counts[name] += 1
             label.write_text("\n".join(lines) + ("\n" if lines else ""))
             paths[split].append(str(image))
-    if not any(counts[name] for name in names[4:]):
+    if not any(training_counts[name] for name in names[4:]):
         raise ValueError("Review and assign training frames for a new object first")
     for split, entries in paths.items():
         (output / f"{split}.txt").write_text("\n".join(entries) + ("\n" if entries else ""))

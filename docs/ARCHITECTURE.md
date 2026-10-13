@@ -61,7 +61,7 @@ dashboard.py ──pty──▶ record.sh ──▶ lerobot-record ──▶ ~/h
 | Cost | Minutes to hours | ~5.6 s/step at batch 8 on the 8060S, bf16 only |
 | Inference on the NucBox | `lerobot-rollout` through `record.sh policy` | `lerobot-rollout` with RTC (`pi05/rollout.sh`), ~545 ms per 50-step chunk |
 
-ACT is the reliable baseline for a single fixed task. π₀.₅ is the route to one model that follows several
+ACT is the baseline implementation for a single fixed task. π₀.₅ is the route to one model that follows several
 spoken instructions, which is what evera's tool modes need eventually. Each mode in `evera/actions.js` carries
 both a task text and a checkpoint, so a mode can point at either kind of policy.
 
@@ -78,7 +78,7 @@ iPad evera/ ──POST /api/policy {ckpt, task, secs}──▶ dashboard.py ─�
   from a dev server or a tunnel.
 - The app has no build step. three.js is vendored, the URDF and STL meshes ship in `evera/assets/so101/`,
   and OpenAI and ElevenLabs keys are typed in on the iPad and never committed.
-- Voice: OpenAI transcription, then a GPT tool call picks the tool and mode, then ElevenLabs speaks the reply.
+- Voice: OpenAI transcription, then a GPT tool call picks the tool and mode, then ElevenLabs speaks the reply. The 3D arm uses scripted animation, not measured joint telemetry.
   "Stop", "halt" and "freeze" are matched on the iPad itself, without waiting for GPT.
 
 ## Vision: tool segmentation
@@ -97,7 +97,8 @@ Captured sessions ─▶ SAM box-prompted mask proposals ─▶ per-mask review 
 ```
 
 - The live model is provisional. The current ONNX file still has a fourth `wire` class, which the live view
-  filters out. The next checkpoint is three-class and still needs reviewed labels and a held-out test session.
+  filters out. The next supported class order appends `tape_measure` and `multimeter`; trained six-class
+  weights and held-out results are not included in this repository.
 - The Torchvision Mask R-CNN code is an untrained comparison baseline. SAM only proposes training masks.
 - Gates before anyone relies on it: per-class precision, recall and mask AP; false positives on an empty bench;
   live CPU latency on the NucBox; all measured on a capture session that wasn't used for training.

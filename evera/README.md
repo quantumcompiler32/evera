@@ -1,6 +1,6 @@
 # evera: iPad control app for the SO-101
 
-evera is a JARVIS-style bench assistant. Tap a tool (or say "evera, pass me the multimeter"), and the arm runs that action through the dashboard's `/api/policy`. A live 3D model of the real SO-101 (from its URDF) animates with the run state. evera answers out loud through ElevenLabs.
+evera is a JARVIS-style bench assistant. Tap a tool (or say "evera, pass me the multimeter"), and the arm runs that action through the dashboard's `/api/policy`. A 3D model of the SO-101 (from its URDF) uses scripted animation tied to run state; it does not display measured joint telemetry. evera answers out loud through ElevenLabs.
 
 It's a plain web app with no build step. `robot/dashboard.py` serves it at **`/evera/`**.
 
@@ -50,7 +50,7 @@ It prints a URL like `https://something.trycloudflare.com`. On the iPad, open th
 ## Using it
 
 - **Tap a tool:** the arm (folded at rest) dissolves and a 3D model of that tool materializes in the center, spinning on the pedestal. Its mode chips appear at the top. Tap a chip (e.g. *Hand over*, *Heat-set insert*) to run it: the arm comes back to perform the action, then the tool model returns. Tap the empty stage to go back to the arm.
-- **Voice:** GPT picks the tool and mode and acts right away. "Stop", "halt" or "freeze" is caught on the iPad itself and stops instantly, without waiting for GPT.
+- **Voice:** GPT picks the tool and mode and acts right away. "Stop", "halt" or "freeze" is caught on the iPad itself and sends the software stop request without waiting for GPT. Network and process latency still apply.
 - **STOP** (header, plus the big red button while running), or **Esc** on a keyboard: sends `POST /api/key {k:"q"}`. The arm returns to its start pose.
 - **Drag the 3D arm** to orbit it. Double-tap to reset the view. Tap a camera feed to enlarge it.
 - **Without keys** it still works: the offline brain matches keywords and the voice falls back to the browser's.

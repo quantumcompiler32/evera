@@ -19,3 +19,15 @@ training/lerobot_src.tgz
 
 # local Claude Code config
 .claude/
+
+# Local presentation builds and operator state (keep files on disk)
+.presentation-build/
+presentation-output/
+vision_dashboard/roles.json
+*.log
+
+# Model weights belong in external artifact storage
+*.pt
+*.pth
+*.onnx
+*.safetensors

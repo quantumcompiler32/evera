@@ -40,17 +40,19 @@ export class Backend {
   async poll() {
     let real = null;
     if (!(new URLSearchParams(location.search).has('sim') || this.getSettings().link === 'sim')) {
+      let timeout;
       try {
         const ctl = new AbortController();
-        const to = setTimeout(() => ctl.abort(), 5000);
+        timeout = setTimeout(() => ctl.abort(), 5000);
         const r = await fetch(this.base + '/api/status', { cache: 'no-store', signal: ctl.signal });
-        clearTimeout(to);
         if (!r.ok) throw new Error(r.status);
         real = await r.json();
         this.fails = 0;
         this.everConnected = true;
       } catch {
         this.fails++;
+      } finally {
+        clearTimeout(timeout);
       }
     }
     const s = real
